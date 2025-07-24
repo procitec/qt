@@ -1001,6 +1001,29 @@ void tst_QCoreApplication::threadedEventDelivery()
 
 }
 
+#if QT_CONFIG(process)
+#if defined(Q_OS_WIN)
+#  define EXE ".exe"
+#else
+#  define EXE ""
+#endif
+void tst_QCoreApplication::runHelperTest()
+{
+#  ifdef Q_OS_ANDROID
+    QSKIP("Skipped on Android: helper not present");
+#  endif
+    int argc = 0;
+    QCoreApplication app(argc, nullptr);
+    QProcess process;
+    process.start(QFINDTESTDATA("apphelper" EXE), { QTest::currentTestFunction() });
+    QVERIFY2(process.waitForFinished(5000), qPrintable(process.errorString()));
+    QCOMPARE(process.readAllStandardError(), QString());
+    QCOMPARE(process.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(process.exitCode(), 0);
+}
+#undef EXE
+#endif
+
 void tst_QCoreApplication::testTrWithPercantegeAtTheEnd()
 {
     QCoreApplication::translate("testcontext", "this will crash%", "testdisamb", 3);
@@ -1064,13 +1087,6 @@ static void createQObjectOnDestruction()
     // Make sure that we can create a QObject (and thus have an associated
     // QThread) after the last QObject has been destroyed (especially after
     // QCoreApplication has).
-
-#if !defined(QT_QGUIAPPLICATIONTEST) && !defined(Q_OS_WIN) && !defined(Q_OS_VXWORKS)
-    // QCoreApplicationData's global static destructor has run and cleaned up
-    // the QAdoptedThread.
-    if (theMainThreadIsSet())
-        qFatal("theMainThreadIsSet() returned true; some QObject must have leaked");
-#endif
 
     // Before the fixes, this would cause a dangling pointer dereference. If
     // the problem comes back, it's possible that the following causes no

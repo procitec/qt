@@ -34,9 +34,8 @@ private slots:
     void addTheme();
     void removeTheme();
 
-    // TODO: QTBUG-99844
-    //void addCustomItem();
-    //void removeCustomItem();
+    void addCustomItem();
+    void removeCustomItem();
 
     void renderToImage();
 
@@ -122,6 +121,11 @@ void tst_bars::initialProperties()
     QCOMPARE(m_graph->lightColor(), QColor(Qt::white));
     QCOMPARE(m_graph->lightStrength(), 5.0f);
     QCOMPARE(m_graph->shadowStrength(), 25.0f);
+    QCOMPARE(m_graph->minCameraXRotation(), -180);
+    QCOMPARE(m_graph->maxCameraXRotation(), 180);
+    QCOMPARE(m_graph->minCameraYRotation(), 0);
+    QCOMPARE(m_graph->maxCameraYRotation(), 90);
+    QCOMPARE(m_graph->cameraTargetPosition(), QVector3D(.0f, .0f, .0f));
 }
 
 void tst_bars::initializeProperties()
@@ -162,6 +166,7 @@ void tst_bars::initializeProperties()
     QSignalSpy maxCameraXRotSpy(m_graph, &Q3DBarsWidgetItem::maxCameraXRotationChanged);
     QSignalSpy minCameraYRotSpy(m_graph, &Q3DBarsWidgetItem::minCameraYRotationChanged);
     QSignalSpy maxCameraYRotSpy(m_graph, &Q3DBarsWidgetItem::maxCameraYRotationChanged);
+    QSignalSpy cameraTargetPosSpy(m_graph, &Q3DBarsWidgetItem::cameraTargetPositionChanged);
 
     m_graph->setMultiSeriesUniform(true);
     m_graph->setBarThickness(0.2f);
@@ -195,7 +200,7 @@ void tst_bars::initializeProperties()
     m_graph->setMeasureFps(true);
     m_graph->setOrthoProjection(true);
     m_graph->setAspectRatio(1.0);
-    m_graph->setOptimizationHint(QtGraphs3D::OptimizationHint::Default);
+    m_graph->setOptimizationHint(QtGraphs3D::OptimizationHint::Legacy);
     m_graph->setPolar(true);
     m_graph->setRadialLabelOffset(0.1f);
     m_graph->setHorizontalAspectRatio(1.0);
@@ -216,8 +221,9 @@ void tst_bars::initializeProperties()
     m_graph->setCameraZoomLevel(5.0f);
     m_graph->setMinCameraZoomLevel(1.0f);
     m_graph->setMaxCameraZoomLevel(10.0f);
-    m_graph->setWrapCameraXRotation(true);
+    m_graph->setWrapCameraXRotation(false);
     m_graph->setWrapCameraYRotation(true);
+    m_graph->setCameraTargetPosition(QVector3D(1.f, .0f, 1.f));
 
     QCOMPARE(m_graph->activeTheme()->theme(), QGraphsTheme::Theme::QtGreenNeon);
     QCOMPARE(m_graph->selectionMode(),
@@ -228,7 +234,7 @@ void tst_bars::initializeProperties()
     QCOMPARE(m_graph->measureFps(), true);
     QCOMPARE(m_graph->isOrthoProjection(), true);
     QCOMPARE(m_graph->aspectRatio(), 1.0);
-    QCOMPARE(m_graph->optimizationHint(), QtGraphs3D::OptimizationHint::Default);
+    QCOMPARE(m_graph->optimizationHint(), QtGraphs3D::OptimizationHint::Legacy);
     QCOMPARE(m_graph->isPolar(), true);
     QCOMPARE(m_graph->radialLabelOffset(), 0.1f);
     QCOMPARE(m_graph->horizontalAspectRatio(), 1.0);
@@ -242,34 +248,43 @@ void tst_bars::initializeProperties()
 
     QCOMPARE(activeThemeSpy.size(), 1);
     QCOMPARE(selectionModeSpy.size(), 1);
-    QCOMPARE(shadowQualitySpy.size(), 1);
+    // one for setShadowQuality and one for setOrthoProjection, which calls setShadowQuality
+    QCOMPARE(shadowQualitySpy.size(), 2);
 
+    QCOMPARE(m_graph->cameraTargetPosition(), QVector3D(1.f, .0f, 1.f));
+
+    // these are connected to graphsitems signals
     QCOMPARE(selectedElementSpy.size(), 0); // this is connected to graphsitems signal
     QCOMPARE(queriedGraphPositionSpy.size(), 0); // this is connected to graphsitems signal
 
-    // These are all 0 because they are never emitted anywhere QTBUG-129109
-    QCOMPARE(measureFpsSpy.size(), 0);
     QCOMPARE(currentFpsSpy.size(), 0);
-    QCOMPARE(orthoSpy.size(), 0);
-    QCOMPARE(aspectRatioSpy.size(), 0);
-    QCOMPARE(optimizationHintsSpy.size(), 0);
-    QCOMPARE(polarSpy.size(), 0);
-    QCOMPARE(labelmarginSpy.size(), 0);
-    QCOMPARE(radialLabelOffsetSpy.size(), 0);
-    QCOMPARE(horizontalAspectRatioSpy.size(), 0);
-    QCOMPARE(localeSpy.size(), 0);
 
-    QCOMPARE(cameraXRotSpy.size(), 0);
-    QCOMPARE(cameraYRotSpy.size(), 0);
-    QCOMPARE(cameraZoomSpy.size(), 0);
-    QCOMPARE(cameraMinZoomSpy.size(), 0);
-    QCOMPARE(cameraMaxZoomSpy.size(), 0);
-    QCOMPARE(wrapCameraXRotSpy.size(), 0);
-    QCOMPARE(wrapCameraYRotSpy.size(), 0);
-    QCOMPARE(minCameraXRotSpy.size(), 0);
-    QCOMPARE(maxCameraXRotSpy.size(), 0);
-    QCOMPARE(minCameraYRotSpy.size(), 0);
-    QCOMPARE(maxCameraYRotSpy.size(), 0);
+    QCOMPARE(measureFpsSpy.size(), 1);
+    QCOMPARE(orthoSpy.size(), 1);
+    QCOMPARE(aspectRatioSpy.size(), 1);
+    QCOMPARE(optimizationHintsSpy.size(), 1);
+    QCOMPARE(polarSpy.size(), 1);
+    QCOMPARE(labelmarginSpy.size(), 1);
+    QCOMPARE(radialLabelOffsetSpy.size(), 1);
+    QCOMPARE(horizontalAspectRatioSpy.size(), 1);
+    QCOMPARE(localeSpy.size(), 1);
+
+    QCOMPARE(cameraXRotSpy.size(), 1);
+    QCOMPARE(cameraYRotSpy.size(), 1);
+    QCOMPARE(cameraZoomSpy.size(), 1);
+    QCOMPARE(cameraMinZoomSpy.size(), 1);
+    QCOMPARE(cameraMaxZoomSpy.size(), 1);
+    QCOMPARE(wrapCameraXRotSpy.size(), 1);
+    QCOMPARE(wrapCameraYRotSpy.size(), 1);
+    QCOMPARE(minCameraXRotSpy.size(), 1);
+    QCOMPARE(maxCameraXRotSpy.size(), 1);
+    QCOMPARE(minCameraYRotSpy.size(), 1);
+    QCOMPARE(maxCameraYRotSpy.size(), 1);
+
+    QCOMPARE(m_graph->minCameraXRotation(), 10.0f);
+    QCOMPARE(m_graph->maxCameraXRotation(), 45.0f);
+    QCOMPARE(m_graph->minCameraYRotation(), 10.0f);
+    QCOMPARE(m_graph->maxCameraYRotation(), 45.0f);
 }
 
 void tst_bars::invalidProperties()
@@ -281,8 +296,8 @@ void tst_bars::invalidProperties()
     m_graph->setLocale(QLocale("XX"));
 
     QCOMPARE(m_graph->selectionMode(), QtGraphs3D::SelectionFlag::Item);
-    QCOMPARE(m_graph->aspectRatio(), -1.0/*2.0*/); // TODO: Fix once QTRD-3367 is done
-    QCOMPARE(m_graph->horizontalAspectRatio(), -1.0/*0.0*/); // TODO: Fix once QTRD-3367 is done
+    QCOMPARE(m_graph->aspectRatio(), 2.0);
+    QCOMPARE(m_graph->horizontalAspectRatio(), 0.0);
     QCOMPARE(m_graph->locale(), QLocale("C"));
 
     m_graph->setAmbientLightStrength(-1.0f);
@@ -299,6 +314,12 @@ void tst_bars::invalidProperties()
     QCOMPARE(m_graph->shadowStrength(), 25.0f);
     m_graph->setShadowStrength(100.1f);
     QCOMPARE(m_graph->shadowStrength(), 25.0f);
+
+    m_graph->setCameraTargetPosition(QVector3D(2.f, 2.f, -2.f));
+    QCOMPARE(m_graph->cameraTargetPosition(), QVector3D(1.f, 1.f, -1.f));
+
+    m_graph->setBarThickness(-1.f);
+    QCOMPARE(m_graph->barThickness(), 1.f);
 }
 
 void tst_bars::addSeries()
@@ -430,16 +451,15 @@ void tst_bars::removeTheme()
     delete theme2;
     delete theme;
 }
-// TODO: QTBUG-99844
-/*
+
 void tst_bars::addCustomItem()
 {
     QCustom3DItem *item = new QCustom3DItem();
     QCustom3DItem *item2 = new QCustom3DItem();
 
-    m_graph->addCustomItem(item);
+    QCOMPARE(m_graph->addCustomItem(item), 0);
     QCOMPARE(m_graph->customItems().size(), 1);
-    m_graph->addCustomItem(item2);
+    QCOMPARE(m_graph->addCustomItem(item2), 1);
     QCOMPARE(m_graph->customItems().size(), 2);
 }
 
@@ -464,7 +484,7 @@ void tst_bars::removeCustomItem()
     m_graph->removeCustomItems();
     QCOMPARE(m_graph->customItems().size(), 0);
 }
-*/
+
 void tst_bars::renderToImage()
 {
     /* Crashes on some CI machines using Mesa, but can't repro locally, so commented out for now.

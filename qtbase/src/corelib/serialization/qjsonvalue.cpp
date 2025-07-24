@@ -292,8 +292,7 @@ void QJsonValue::swap(QJsonValue &other) noexcept
 /*!
     \fn void QJsonValue::swap(QJsonValue &other)
     \since 5.10
-
-    Swaps the value \a other with this. This operation is very fast and never fails.
+    \memberswap{value}
 */
 
 /*!
@@ -1018,7 +1017,6 @@ QJsonValue QJsonValueConstRef::concrete(QJsonValueConstRef self) noexcept
 
 QString QJsonValueConstRef::objectKey(QJsonValueConstRef self)
 {
-    Q_ASSERT(self.is_object);
     Q_ASSERT(self.is_object);
     const QCborContainerPrivate *d = QJsonPrivate::Value::container(self);
     qsizetype index = QJsonPrivate::Value::indexHelper(self);

@@ -82,9 +82,8 @@ class QtEmbeddedDelegate extends QtActivityDelegateBase
                     m_activity.getApplication().unregisterActivityLifecycleCallbacks(this);
                     QtNative.unregisterAppStateListener(QtEmbeddedDelegate.this);
                     QtEmbeddedViewInterfaceFactory.remove(m_activity);
-                    QtNative.terminateQt();
+                    QtNative.quitQt();
                     QtNative.setActivity(null);
-                    QtNative.getQtThread().exit();
                 }
             }
         });
@@ -95,12 +94,19 @@ class QtEmbeddedDelegate extends QtActivityDelegateBase
         synchronized (this) {
             m_stateDetails = details;
             if (details.isStarted && !m_backendsRegistered) {
+                if (BackendRegister.isNull())
+                    return;
+
                 m_backendsRegistered = true;
                 BackendRegister.registerBackend(QtWindowInterface.class, (QtWindowInterface)this);
                 BackendRegister.registerBackend(QtMenuInterface.class, (QtMenuInterface)this);
                 BackendRegister.registerBackend(QtInputInterface.class, m_inputDelegate);
             } else if (!details.isStarted && m_backendsRegistered) {
                 m_backendsRegistered = false;
+
+                if (BackendRegister.isNull())
+                    return;
+
                 BackendRegister.unregisterBackend(QtWindowInterface.class);
                 BackendRegister.unregisterBackend(QtMenuInterface.class);
                 BackendRegister.unregisterBackend(QtInputInterface.class);

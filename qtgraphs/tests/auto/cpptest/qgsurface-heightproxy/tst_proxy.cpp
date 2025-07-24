@@ -160,6 +160,12 @@ void tst_proxy::initializeProperties()
 
 void tst_proxy::invalidProperties()
 {
+    // Verify we're getting this warning
+    QTest::ignoreMessage(QtWarningMsg, "Height map file :/nonexistenttexture.jpg does not exist.");
+    m_proxy->setHeightMapFile(":/nonexistenttexture.jpg");
+    QEXPECT_FAIL("", "Nonexistent file given", Continue);
+    QCOMPARE(m_proxy->heightMapFile(), QString(":/nonexistenttexture.jpg"));
+
     m_proxy->setMaxXValue(-10.0f);
     m_proxy->setMaxZValue(-10.0f);
     QCOMPARE(m_proxy->maxXValue(), -10.0f);

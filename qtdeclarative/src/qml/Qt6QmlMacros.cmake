@@ -235,9 +235,14 @@ function(qt6_add_qml_module target)
         ENABLE_TYPE_COMPILER
 
         # Used to mark modules as having static side effects (i.e. if they install an image provider)
+        # The main effect is that we don't warn about such modules being unused. This is also
+        # applied to the builtins since we never want to warn about them being unused.
         __QT_INTERNAL_STATIC_MODULE
-        # Used to mark modules as being a system module that provides all builtins
+
+        # Used to mark modules as being a system module that provides all builtins.
+        # This also includes the JavaScript root object as denoted by a jsroot.qmltypes file.
         __QT_INTERNAL_SYSTEM_MODULE
+
         # Give the resource for the qmldir a unique name; TODO: Remove once we can
         __QT_INTERNAL_DISAMBIGUATE_QMLDIR_RESOURCE
     )
@@ -683,6 +688,12 @@ function(qt6_add_qml_module target)
     list(REMOVE_DUPLICATES all_dependency_targets)
     set_property(TARGET ${target} PROPERTY QT_QML_DEPENDENT_QML_MODULE_TARGETS "${all_dependency_targets}")
     _qt_internal_collect_qml_module_dependencies(${target})
+    # add a dependency at the build system level, too - we know that
+    # the module wouldn't run if the dependencies
+    # do not exist yet
+    if(all_dependency_targets)
+        add_dependencies(${target} ${all_dependency_targets})
+    endif()
 
     if(arg_AUTO_RESOURCE_PREFIX)
         if(arg_RESOURCE_PREFIX)
@@ -892,6 +903,15 @@ Check https://doc.qt.io/qt-6/qt-cmake-policy-qtp0001.html for policy details."
     # special (and is not a real resource file)
     set_property(TARGET ${target} APPEND PROPERTY _qt_qml_meta_qrc_files "${dir_map_qrc}")
 
+    set(do_qml_aotstats OFF)
+    if(NOT DEFINED QT_QML_GENERATE_AOTSTATS OR QT_QML_GENERATE_AOTSTATS)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.19)
+            set(do_qml_aotstats ON)
+        else()
+            message(WARNING "aotstats is not supported on CMake versions < 3.19")
+        endif()
+    endif()
+
     set(cache_target)
     qt6_target_qml_sources(${target}
         __QT_INTERNAL_FORCE_DEFER_QMLDIR
@@ -899,7 +919,6 @@ Check https://doc.qt.io/qt-6/qt-cmake-policy-qtp0001.html for policy details."
         RESOURCES ${arg_RESOURCES}
         OUTPUT_TARGETS cache_target
         PREFIX "${qt_qml_module_resource_prefix}"
-        ADDING_QML_MODULE
     )
     list(APPEND output_targets ${cache_target})
 
@@ -1074,19 +1093,17 @@ Check https://doc.qt.io/qt-6/qt-cmake-policy-qtp0001.html for policy details."
         endif()
     endif()
 
-    if("${CMAKE_VERSION}" VERSION_GREATER_EQUAL "3.19.0")
+    if(do_qml_aotstats)
+        set_property(GLOBAL APPEND PROPERTY _qt_qml_aotstats_module_targets ${target})
+        set_target_properties(${target} PROPERTIES
+            QT_QML_MODULE_RCC_QMLCACHE_PATH "${CMAKE_CURRENT_BINARY_DIR}/.rcc/qmlcache"
+        )
+
         get_cmake_property(aotstats_setup_called _qt_internal_deferred_aotstats_setup)
         if(NOT aotstats_setup_called)
             set_property(GLOBAL PROPERTY _qt_internal_deferred_aotstats_setup TRUE)
             cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY \"${CMAKE_BINARY_DIR}\" "
                 "CALL _qt_internal_deferred_aotstats_setup)")
-        endif()
-    else()
-        if(NOT TARGET all_aotstats)
-            add_custom_target(
-                all_aotstats
-                ${CMAKE_COMMAND} -E echo "aotstats is not supported on CMake versions < 3.19"
-            )
         endif()
     endif()
 endfunction()
@@ -1210,6 +1227,11 @@ function(_qt_internal_write_deferred_qmlls_ini_file target)
         list(APPEND _import_paths "${import_path}")
     endforeach()
 
+    _qt_internal_get_main_qt_qml_import_paths(installation_paths)
+    list(APPEND _import_paths ${installation_paths})
+    # standalone builds will have the installation path twice in _import_paths
+    list(REMOVE_DUPLICATES _import_paths)
+
     if(NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
         # replace cmake list separator ';' with unix path separator ':'
         string(REPLACE ";" ":" concatenated_build_dirs "${_qmlls_ini_build_folders}")
@@ -1241,18 +1263,21 @@ function(_populate_qmlls_ini_file target qmlls_ini_file concatenated_build_dirs 
     get_target_property(qtpaths ${QT_CMAKE_EXPORT_NAMESPACE}::qtpaths LOCATION)
     _qt_internal_get_tool_wrapper_script_path(tool_wrapper)
 
+    string(REPLACE "\"" "\\\"" concatenated_build_dirs "${concatenated_build_dirs}")
+    string(REPLACE "\"" "\\\"" import_paths "${import_paths}")
+
     add_custom_command(
         OUTPUT
             ${qmlls_ini_file}
         COMMAND ${CMAKE_COMMAND} -E echo "[General]" > ${qmlls_ini_file}
-        COMMAND ${CMAKE_COMMAND} -E echo "buildDir=${concatenated_build_dirs}" >> ${qmlls_ini_file}
+        COMMAND ${CMAKE_COMMAND} -E echo "buildDir=\"${concatenated_build_dirs}\"" >> ${qmlls_ini_file}
         COMMAND ${CMAKE_COMMAND} -E echo "no-cmake-calls=false" >> ${qmlls_ini_file}
         COMMAND ${CMAKE_COMMAND} -E echo_append "docDir=" >> ${qmlls_ini_file}
         COMMAND
             ${tool_wrapper}
             ${qtpaths}
             --query QT_INSTALL_DOCS >> ${qmlls_ini_file}
-        COMMAND ${CMAKE_COMMAND} -E echo "importPaths=${import_paths}" >> ${qmlls_ini_file}
+        COMMAND ${CMAKE_COMMAND} -E echo "importPaths=\"${import_paths}\"" >> ${qmlls_ini_file}
         COMMENT "Populating .qmlls.ini file"
         VERBATIM
     )
@@ -1773,6 +1798,21 @@ function(_qt_internal_target_generate_qmldir target)
     _qt_internal_qmldir_item_list(import QT_QML_MODULE_IMPORTS)
     _qt_internal_qmldir_item_list("optional import" QT_QML_MODULE_OPTIONAL_IMPORTS)
     _qt_internal_qmldir_item_list("default import" QT_QML_MODULE_DEFAULT_IMPORTS)
+
+    # User convenience: Add QtQuick to dependencies if it hasn't been added so far
+    # and the target links against  Qt::Quick
+    if(NOT "QtQuick" IN_LIST QT_QML_MODULE_DEPENDENCIES)
+        get_target_property(linked_libraries ${target} LINK_LIBRARIES)
+        if((TARGET Qt6::Quick AND Qt6::Quick IN_LIST linked_libraries) OR
+            (TARGET Qt::Quick AND Qt::Quick IN_LIST linked_libraries))
+            set_property(
+                TARGET ${target}
+                APPEND
+                PROPERTY QT_QML_MODULE_DEPENDENCIES
+                "QtQuick"
+            )
+        endif()
+    endif()
 
     _qt_internal_qmldir_item_list(depends QT_QML_MODULE_DEPENDENCIES)
 
@@ -2720,6 +2760,135 @@ if(NOT QT_NO_CREATE_VERSIONLESS_FUNCTIONS)
     endfunction()
 endif()
 
+# Set up custom targets to copy qml files or resources of a target into its build directory.
+# The custom targets run a cmake script that will go through each source file and copy it only if
+# it doesn't exist or is modified.
+# This is done with a single script per-target, rather than one command per file, to significantly
+# decrease build time in a project when there are many files to copy, especially for the
+# Xcode generator which is more susceptible to it.
+#
+# The new way of copying files can be opted out by setting the QT_COPY_QML_FILES_OLD_WAY variable
+# to TRUE.
+# TODO: Remove this opt out once we confirm there are no regressions.
+#
+# CUSTOM_TARGET_SUFFIX - suffix used in the name of the custom target created
+# PROP_WITH_ENTRIES - the target property that contains the (src;dest) tuples of absolute
+# paths
+# PROP_WITH_SRCS - the target property that contains the list of all absolute source file paths, to
+# be used to setup dependency information.
+# FILE_TYPE - a label to show in the custom target COMMAND COMMENT field
+function(_qt_internal_qml_copy_files_to_build_dir target)
+    if(QT_COPY_QML_FILES_OLD_WAY)
+        return()
+    endif()
+
+    set(opt_args "")
+    set(single_args
+        CUSTOM_TARGET_SUFFIX
+        PROP_WITH_ENTRIES
+        PROP_WITH_SRCS
+        FILE_TYPE
+    )
+    set(multi_args "")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "${opt_args}" "${single_args}" "${multi_args}")
+    _qt_internal_validate_all_args_are_parsed(arg)
+
+    if(NOT arg_CUSTOM_TARGET_SUFFIX)
+        message(FATAL_ERROR "CUSTOM_TARGET_SUFFIX must be provided")
+    endif()
+
+    if(NOT arg_PROP_WITH_ENTRIES)
+        message(FATAL_ERROR "PROP_WITH_ENTRIES must be provided")
+    endif()
+
+    if(NOT arg_PROP_WITH_SRCS)
+        message(FATAL_ERROR "PROP_WITH_SRCS must be provided")
+    endif()
+
+    if(NOT arg_FILE_TYPE)
+        message(FATAL_ERROR "FILE_TYPE must be provided")
+    endif()
+
+    set(setup_done_prop "_qt_qml_copy${arg_CUSTOM_TARGET_SUFFIX}_setup_done")
+    get_target_property(copy_files_setup_done "${target}" "${setup_done_prop}")
+
+    # Protect against multiple calls of qt6_add_qml_sources. It's enough to setup once,
+    # because we use generator expressions to get all the files.
+    if(copy_files_setup_done)
+        return()
+    endif()
+
+    set_property(TARGET "${target}" PROPERTY "${setup_done_prop}" TRUE)
+
+    get_target_property(target_source_dir "${target}" SOURCE_DIR)
+
+    set(copy_files_script_path
+        "${__qt_qml_macros_module_base_dir}/Qt6QmlCopyFiles.cmake")
+
+    set(generated_copy_files_info_path
+        "${CMAKE_CURRENT_BINARY_DIR}/.qt/${target}_${arg_CUSTOM_TARGET_SUFFIX}.cmake")
+    set(generated_copy_files_info_path_timestamp
+        "${CMAKE_CURRENT_BINARY_DIR}/.qt/${target}_${arg_CUSTOM_TARGET_SUFFIX}.txt")
+
+
+    set(generated_copy_files_info
+        "
+set(target \"${target}\")
+set(working_dir \"${target_source_dir}\")
+set(src_and_dest_list
+$<TARGET_PROPERTY:${target},${arg_PROP_WITH_ENTRIES}>
+)
+set(timestamp_file \"${generated_copy_files_info_path_timestamp}\")
+"
+    )
+
+    file(GENERATE
+        OUTPUT "${generated_copy_files_info_path}"
+        CONTENT "${generated_copy_files_info}"
+    )
+
+    # In case there are no files, the dependencies should eval to an empty list.
+    set(sources_genex "$<TARGET_PROPERTY:${target},${arg_PROP_WITH_SRCS}>")
+    set(wrapped_sources_genex "$<$<BOOL:${sources_genex}>:${sources_genex}>")
+
+    add_custom_command(OUTPUT "${generated_copy_files_info_path_timestamp}"
+        COMMAND
+            "${CMAKE_COMMAND}"
+            "-DFILES_INFO_PATH=${generated_copy_files_info_path}"
+            -P "${copy_files_script_path}"
+        DEPENDS
+            "${copy_files_script_path}"
+            ${wrapped_sources_genex}
+        VERBATIM
+        COMMENT "Copying ${target} qml ${arg_FILE_TYPE} into build dir"
+    )
+
+    set(copy_files_target "${target}_copy_${arg_CUSTOM_TARGET_SUFFIX}")
+
+    add_custom_target("${copy_files_target}"
+        DEPENDS
+            "${generated_copy_files_info_path_timestamp}"
+    )
+
+    # The ${target}_tooling target might not always exist, e.g. if qmlcachegen is disabled and thus
+    # no files are added to generated_sources_other_scope, thus the tooling target creation is
+    # skipped. Or when doing an in-source build of qtdeclarative, in which case the source and
+    # build dir coincide, and no files will be copied.
+    # We can't detect that no files will be copied at this point, because we rely on evaluating the
+    # property with files during generation time, and files might be added in subsequent calls
+    # of qt_target_qml_sources, after the first call to this function, and a second invocation
+    # will just return, because copy_files_setup_done will be true.
+    # In such cases, make this target a dependency of the main target directly.
+    if(TARGET "${target}_tooling")
+        set(dependent_target "${target}_tooling")
+    else()
+        set(dependent_target "${target}")
+    endif()
+    add_dependencies("${dependent_target}" "${copy_files_target}")
+
+    _qt_internal_assign_to_internal_targets_folder("${copy_files_target}")
+endfunction()
+
 function(qt6_target_qml_sources target)
 
     get_target_property(uri        ${target} QT_QML_MODULE_URI)
@@ -2733,7 +2902,6 @@ function(qt6_target_qml_sources target)
         NO_CACHEGEN
         NO_QMLDIR_TYPES
         __QT_INTERNAL_FORCE_DEFER_QMLDIR  # Used only by qt6_add_qml_module()
-        ADDING_QML_MODULE
     )
 
     set(args_single
@@ -2751,10 +2919,6 @@ function(qt6_target_qml_sources target)
     )
     if(arg_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR "Unknown/unexpected arguments: ${arg_UNPARSED_ARGUMENTS}")
-    endif()
-
-    if(NOT arg_QML_FILES)
-        set_property(GLOBAL APPEND PROPERTY _qt_qml_aotstats_module_targets ${target})
     endif()
 
     get_target_property(no_lint ${target} QT_QML_MODULE_NO_LINT)
@@ -2880,11 +3044,17 @@ function(qt6_target_qml_sources target)
             "$<${have_direct_calls}:--direct-calls>"
             "$<${have_arguments}:${arguments}>"
             ${qrc_resource_args}
+        )
+
+        if(do_qml_aotstats)
             # The --only-bytecode argument is mutually exclusive with aotstats and can
             # be added after qt_add_qml_module. Conditionally add aotstats flags via genex.
-            "$<$<NOT:$<IN_LIST:--only-bytecode,${arguments}>>:--dump-aot-stats>"
-            "$<$<NOT:$<IN_LIST:--only-bytecode,${arguments}>>:--module-id=${uri}(${target})>"
-        )
+            set(aotstats_args
+                "$<$<NOT:$<IN_LIST:--only-bytecode,${arguments}>>:--dump-aot-stats>"
+                "$<$<NOT:$<IN_LIST:--only-bytecode,${arguments}>>:--module-id=${uri}(${target})>"
+            )
+            list(APPEND cachegen_args ${aotstats_args})
+        endif()
 
         # For direct evaluation in if() below
         get_target_property(cachegen_prop ${target} QT_QMLCACHEGEN_EXECUTABLE)
@@ -2920,6 +3090,8 @@ function(qt6_target_qml_sources target)
         set(scope_option "")
     endif()
 
+    set(set_should_create_tooling_target FALSE)
+
     foreach(file_set IN ITEMS QML_FILES RESOURCES)
         foreach(file_src IN LISTS arg_${file_set})
             get_filename_component(file_absolute ${file_src} ABSOLUTE)
@@ -2951,29 +3123,68 @@ function(qt6_target_qml_sources target)
             # and destination paths are the same, it will cause a ninja dependency
             # cycle at build time.
             if(NOT file_out STREQUAL file_absolute)
-                get_filename_component(file_out_dir ${file_out} DIRECTORY)
-                file(MAKE_DIRECTORY ${file_out_dir})
-
+                # Don't try to copy the file if it does not exist at configure time, it might only
+                # be created at generation or build time.
+                # The assumption is we copy the file at configure time initially, and then at build
+                # time later, to make IDEs happy so they can see the files before an initial build.
+                # TODO: Clarify if it is actually necessary to copy the files at configure time,
+                # should be done as part of QTBUG-128323 .
                 if(EXISTS "${file_absolute}")
-                    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
-                        # Significantly increases copying speed according to profiling, presumably
-                        # because we bypass process creation.
-                        file(COPY_FILE "${file_absolute}" "${file_out}" ONLY_IF_DIFFERENT)
-                    else()
-                        execute_process(COMMAND
-                            ${CMAKE_COMMAND} -E copy_if_different ${file_absolute} ${file_out}
-                        )
-                    endif()
+                    _qt_internal_qml_copy_file("${file_absolute}" "${file_out}")
+                else()
+                    # If the file does not exist at configure time, make sure we at least
+                    # create the destination path directory, so that the 'old way' build time copy
+                    # does not error out due to missing destination directory. It's faster to do
+                    # it at configure time to avoid extra process spawning.
+                    get_filename_component(file_out_dir "${file_out}" DIRECTORY)
+                    file(MAKE_DIRECTORY "${file_out_dir}")
                 endif()
 
-                add_custom_command(OUTPUT ${file_out}
-                    COMMAND ${CMAKE_COMMAND} -E copy ${file_absolute} ${file_out}
-                    DEPENDS ${file_absolute}
-                    WORKING_DIRECTORY $<TARGET_PROPERTY:${target},SOURCE_DIR>
-                    VERBATIM
-                    COMMENT "Copying ${file_src} to ${file_out}"
-                )
-                list(APPEND copied_files ${file_out})
+                # Currently we need to copy the qml and js files into the build dir because most
+                # tooling depends on them being there: qmllint, qmlcachegen, qmlsc, qmltc, qmlls,
+                # old Qt Creator code model, etc.
+                # There don't seem to be any consumers of the image files in the build dir right
+                # now, but a qml module is considered incomplete without them.
+                # Someone might use them in a qmllint plugin or some IDE may want to use them for
+                # some "preview" feature.
+                # TODO: Investigate approach of not copying files at build time, but rather
+                # creating an index file in the build dir that can map to the source dir, and
+                # updating tooling to use the index file.
+                # Should be done as part of QTBUG-128323 .
+                if(QT_COPY_QML_FILES_OLD_WAY)
+                    # Old style creation of one command per file copy.
+                    add_custom_command(OUTPUT ${file_out}
+                        COMMAND ${CMAKE_COMMAND} -E copy ${file_absolute} ${file_out}
+                        DEPENDS ${file_absolute}
+                        WORKING_DIRECTORY $<TARGET_PROPERTY:${target},SOURCE_DIR>
+                        VERBATIM
+                        COMMENT "Copying ${file_src} to ${file_out}"
+                    )
+                    list(APPEND copied_files ${file_out})
+                else()
+                    # New style where we collect all files of a particular type, and then create
+                    # a single custom command to copy them all. This way is faster when there are
+                    # many files.
+                    set(set_should_create_tooling_target TRUE)
+                    if(file_set STREQUAL "QML_FILES")
+                        set(copy_prop "files")
+                    elseif(file_set STREQUAL "RESOURCES")
+                        set(copy_prop "resources")
+                    else()
+                        message(FATAL_ERROR "Unsupported file_set")
+                    endif()
+
+                    set_property(TARGET "${target}"
+                        APPEND PROPERTY _qt_qml_${copy_prop}_absolute_src_paths
+                        "${file_absolute}")
+
+                    # Manually formatted string, so each path is on a separate line in the
+                    # generated file.
+                    set(copy_entry "    \"${file_absolute}\"\n    \"${file_out}\"\n")
+                    set_property(TARGET "${target}"
+                        APPEND_STRING PROPERTY _qt_qml_${copy_prop}_to_copy
+                        "${copy_entry}")
+                endif()
             endif()
         endforeach()
     endforeach()
@@ -3159,7 +3370,7 @@ function(qt6_target_qml_sources target)
             endif()
 
             set(aotstats_file "")
-            if("${qml_file_src}" MATCHES ".+\\.qml")
+            if(do_qml_aotstats AND "${qml_file_src}" MATCHES ".+\\.qml")
                 set(aotstats_file "${compiled_file}.aotstats")
                 list(APPEND aotstats_files ${aotstats_file})
             endif()
@@ -3212,12 +3423,9 @@ function(qt6_target_qml_sources target)
         endif()
     endforeach()
 
-    if(arg_ADDING_QML_MODULE AND "${CMAKE_VERSION}" VERSION_GREATER_EQUAL "3.19.0")
-        set_property(GLOBAL APPEND PROPERTY _qt_qml_aotstats_module_targets ${target})
-        set_target_properties(${target} PROPERTIES
-            QT_QML_MODULE_AOTSTATS_FILES "${aotstats_files}"
-            QT_QML_MODULE_RCC_QMLCACHE_PATH "${CMAKE_CURRENT_BINARY_DIR}/.rcc/qmlcache"
-        )
+    if(do_qml_aotstats)
+        set_property(TARGET ${target} APPEND PROPERTY
+            QT_QML_MODULE_AOTSTATS_FILES ${aotstats_files})
     endif()
 
     if(ANDROID)
@@ -3239,7 +3447,7 @@ function(qt6_target_qml_sources target)
             "The following files should be added${wrong_sources}${wrong_resources}")
     endif()
 
-    if(copied_files OR generated_sources_other_scope)
+    if(set_should_create_tooling_target OR copied_files OR generated_sources_other_scope)
         if(CMAKE_VERSION VERSION_LESS 3.19)
             # Called from qt6_add_qml_module() and we know there can only be
             # this one call. With those constraints, we can use a custom target
@@ -3270,6 +3478,19 @@ function(qt6_target_qml_sources target)
         endif()
         _qt_internal_assign_to_internal_targets_folder(${target}_tooling)
     endif()
+
+    _qt_internal_qml_copy_files_to_build_dir("${target}"
+        CUSTOM_TARGET_SUFFIX qml
+        PROP_WITH_ENTRIES _qt_qml_files_to_copy
+        PROP_WITH_SRCS _qt_qml_files_absolute_src_paths
+        FILE_TYPE "sources"
+    )
+    _qt_internal_qml_copy_files_to_build_dir("${target}"
+        CUSTOM_TARGET_SUFFIX res
+        PROP_WITH_ENTRIES _qt_qml_resources_to_copy
+        PROP_WITH_SRCS _qt_qml_resources_absolute_src_paths
+        FILE_TYPE "resources"
+    )
 
     # Batch all the non-compiled qml sources into a single resource for this
     # call. Subsequent calls for the same target will be in their own separate
@@ -3895,14 +4116,14 @@ function(_qt_internal_scan_qml_imports target imports_file_var when_to_scan)
     endif()
 
     _qt_internal_get_tool_wrapper_script_path(tool_wrapper)
-    set(import_scanner_args ${tool_wrapper} ${tool_path} ${cmd_args})
+    set(import_scanner_args "${tool_path}" ${cmd_args})
 
     # Run qmlimportscanner to generate the cmake file that records the import entries
     if(scan_at_build_time)
         add_custom_command(
             OUTPUT "${imports_file}"
             COMMENT "Running qmlimportscanner for ${target}"
-            COMMAND ${import_scanner_args}
+            COMMAND ${tool_wrapper} ${import_scanner_args}
             WORKING_DIRECTORY ${target_source_dir}
             DEPENDS
                 ${tool_path}
@@ -3917,11 +4138,14 @@ function(_qt_internal_scan_qml_imports target imports_file_var when_to_scan)
         message(VERBOSE "Running qmlimportscanner for ${target}.")
         list(JOIN import_scanner_args " " import_scanner_args_string)
         message(DEBUG "qmlimportscanner command: ${import_scanner_args_string}")
-        execute_process(
+
+        # Pack arguments to avoid escaping issues.
+        set(import_scanner_execute_process_args
             COMMAND ${import_scanner_args}
-            WORKING_DIRECTORY ${target_source_dir}
+            WORKING_DIRECTORY "${target_source_dir}"
             RESULT_VARIABLE result
         )
+        _qt_internal_execute_proccess_in_qt_env(import_scanner_execute_process_args)
         if(result)
             message(FATAL_ERROR
                 "Failed to scan target ${target} for QML imports: ${result}"
@@ -3963,6 +4187,19 @@ function(qt6_import_qml_plugins target)
     if(already_imported OR no_import_scan)
         return()
     endif()
+
+    # Return early for test-like executables only for shared qt builds,
+    # to to avoid very long re-configuration times (many tests running qmlimportscanner takes a
+    # long time).
+    get_target_property(is_test_executable "${target}" _qt_is_test_executable)
+    get_target_property(is_benchmark_test "${target}" _qt_is_benchmark_test)
+    if((is_test_executable OR is_benchmark_test)
+        AND BUILD_SHARED_LIBS
+        AND NOT QT_INTERNAL_FORCE_QML_IMPORT_SCAN_FOR_TESTS
+        )
+        return()
+    endif()
+
     set_target_properties(${target} PROPERTIES _QT_QML_PLUGINS_IMPORTED TRUE)
 
     _qt_internal_scan_qml_imports(${target} imports_file IMMEDIATELY)
@@ -4064,6 +4301,18 @@ if(NOT QT_NO_CREATE_VERSIONLESS_FUNCTIONS)
     endfunction()
 endif()
 
+function(_qt_internal_add_import_qml_plugins_finalizer target)
+    get_property(finalizer_added TARGET ${target} PROPERTY
+        _qt_qml_import_qml_plugins_finalizer_added)
+    if(NOT finalizer_added)
+        set_property(TARGET ${target} APPEND PROPERTY
+            INTERFACE_QT_EXECUTABLE_FINALIZERS
+            qt6_import_qml_plugins
+        )
+        set_property(TARGET ${target} PROPERTY _qt_qml_import_qml_plugins_finalizer_added TRUE)
+    endif()
+endfunction()
+
 function(_qt_internal_add_qml_deploy_info_finalizer target)
     get_property(finalizer_added TARGET ${target} PROPERTY _qt_qml_deploy_finalizer_added)
     if(NOT finalizer_added)
@@ -4094,6 +4343,16 @@ function(_qt_internal_generate_deploy_qml_imports_script target)
     if(already_generated OR no_import_scan)
         return()
     endif()
+
+    # Return early for test-like executables, because deployment of auto tests doesn't make sense.
+    get_target_property(is_test_executable "${target}" _qt_is_test_executable)
+    get_target_property(is_benchmark_test "${target}" _qt_is_benchmark_test)
+    if((is_test_executable OR is_benchmark_test)
+        AND NOT QT_INTERNAL_FORCE_QML_DEPLOY_SCAN_FOR_TESTS
+        )
+        return()
+    endif()
+
     set_target_properties(${target} PROPERTIES _QT_QML_PLUGIN_SCAN_GENERATED TRUE)
 
     # Defer actually running qmlimportscanner until build time. This keeps the

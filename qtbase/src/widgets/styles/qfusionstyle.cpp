@@ -477,30 +477,22 @@ void QFusionStyle::drawPrimitive(PrimitiveElement elem,
     {
         QRect rect = option->rect;
         const int margin = 6;
+        const QColor col = option->palette.window().color();
+        painter->setPen(col.darker(110));
         if (option->state & State_Horizontal) {
-            const int offset = rect.width()/2;
-            painter->setPen(QPen(option->palette.window().color().darker(110)));
-            painter->drawLine(rect.bottomLeft().x() + offset,
-                              rect.bottomLeft().y() - margin,
-                              rect.topLeft().x() + offset,
-                              rect.topLeft().y() + margin);
-            painter->setPen(QPen(option->palette.window().color().lighter(110)));
-            painter->drawLine(rect.bottomLeft().x() + offset + 1,
-                              rect.bottomLeft().y() - margin,
-                              rect.topLeft().x() + offset + 1,
-                              rect.topLeft().y() + margin);
+            const int offset = rect.width() / 2;
+            painter->drawLine(rect.left() + offset, rect.bottom() - margin,
+                              rect.left() + offset, rect.top() + margin);
+            painter->setPen(col.lighter(110));
+            painter->drawLine(rect.left() + offset + 1, rect.bottom() - margin,
+                              rect.left() + offset + 1, rect.top() + margin);
         } else { //Draw vertical separator
-            const int offset = rect.height()/2;
-            painter->setPen(QPen(option->palette.window().color().darker(110)));
-            painter->drawLine(rect.topLeft().x() + margin ,
-                              rect.topLeft().y() + offset,
-                              rect.topRight().x() - margin,
-                              rect.topRight().y() + offset);
-            painter->setPen(QPen(option->palette.window().color().lighter(110)));
-            painter->drawLine(rect.topLeft().x() + margin ,
-                              rect.topLeft().y() + offset + 1,
-                              rect.topRight().x() - margin,
-                              rect.topRight().y() + offset + 1);
+            const int offset = rect.height() / 2;
+            painter->drawLine(rect.left() + margin, rect.top() + offset,
+                              rect.right() - margin, rect.top() + offset);
+            painter->setPen(col.lighter(110));
+            painter->drawLine(rect.left() + margin, rect.top() + offset + 1,
+                              rect.right() - margin, rect.top() + offset + 1);
         }
     }
         break;
@@ -1308,14 +1300,21 @@ void QFusionStyle::drawControl(ControlElement element, const QStyleOption *optio
                     painter->setPen(QPen(highlightedGradientStartColor, 9.0));
                     painter->setClipRect(progressBar.adjusted(1, 1, -1, -1));
 #if QT_CONFIG(animation)
-                if (QProgressStyleAnimation *animation = qobject_cast<QProgressStyleAnimation*>(d->animation(option->styleObject)))
-                    step = animation->animationStep() % 22;
-                else
-                    (const_cast<QFusionStylePrivate*>(d))->startAnimation(new QProgressStyleAnimation(d->animationFps, option->styleObject));
+                    if (QProgressStyleAnimation *animation =
+                        qobject_cast<QProgressStyleAnimation*>(d->animation(option->styleObject))) {
+                        step = animation->animationStep() % 22;
+                    } else {
+                        (const_cast<QFusionStylePrivate*>(d))->startAnimation(
+                                new QProgressStyleAnimation(d->animationFps, option->styleObject)
+                        );
+                    }
 #endif
-                for (int x = progressBar.left() - rect.height(); x < rect.right() ; x += 22)
-                    painter->drawLine(x + step, progressBar.bottom() + 1,
-                                      x + rect.height() + step, progressBar.top() - 2);
+                    QVarLengthArray<QLine, 40> lines;
+                    for (int x = progressBar.left() - rect.height(); x < rect.right() ; x += 22) {
+                        lines.emplace_back(x + step, progressBar.bottom() + 1,
+                                           x + rect.height() + step, progressBar.top() - 2);
+                    }
+                    painter->drawLines(lines.data(), lines.count());
                 }
             }
             if (!indeterminate && !complete) {
@@ -2666,7 +2665,6 @@ void QFusionStyle::drawComplexControl(ComplexControl control, const QStyleOption
             QRect handle = proxy()->subControlRect(CC_Slider, option, SC_SliderHandle, widget);
 
             bool horizontal = slider->orientation == Qt::Horizontal;
-            bool enabled    = slider->state & State_Enabled;
             bool ticksAbove = slider->tickPosition & QSlider::TicksAbove;
             bool ticksBelow = slider->tickPosition & QSlider::TicksBelow;
             QColor activeHighlight = d->highlight(option->palette);
@@ -2694,85 +2692,76 @@ void QFusionStyle::drawComplexControl(ComplexControl control, const QStyleOption
                     QPainter groovePainter(&cache);
                     groovePainter.setRenderHint(QPainter::Antialiasing, true);
                     groovePainter.translate(0.5, 0.5);
+                    QLinearGradient gradient;
+                    if (horizontal) {
+                        gradient.setStart(pixmapRect.center().x(), pixmapRect.top());
+                        gradient.setFinalStop(pixmapRect.center().x(), pixmapRect.bottom());
+                    }
+                    else {
+                        gradient.setStart(pixmapRect.left(), pixmapRect.center().y());
+                        gradient.setFinalStop(pixmapRect.right(), pixmapRect.center().y());
+                    }
                     groovePainter.setPen(QPen(outline));
-                    if (enabled)
-                    {
-                        QLinearGradient gradient;
-                        if (horizontal) {
-                            gradient.setStart(pixmapRect.center().x(), pixmapRect.top());
-                            gradient.setFinalStop(pixmapRect.center().x(), pixmapRect.bottom());
-                        }
-                        else {
-                            gradient.setStart(pixmapRect.left(), pixmapRect.center().y());
-                            gradient.setFinalStop(pixmapRect.right(), pixmapRect.center().y());
-                        }
-                        gradient.setColorAt(0, grooveColor.darker(110));
-                        gradient.setColorAt(1, grooveColor.lighter(110));//palette.button().color().darker(115));
-                        groovePainter.setBrush(gradient);
-                    }
-                    else
-                    {
-                        groovePainter.setBrush(Qt::NoBrush);
-                    }
+                    gradient.setColorAt(0, grooveColor.darker(110));
+                    gradient.setColorAt(1, grooveColor.lighter(110));//palette.button().color().darker(115));
+                    groovePainter.setBrush(gradient);
                     groovePainter.drawRoundedRect(pixmapRect.adjusted(1, 1, -2, -2), 1, 1);
                     groovePainter.end();
                     QPixmapCache::insert(groovePixmapName, cache);
                 }
                 painter->drawPixmap(groove.topLeft(), cache);
-                // draw blue groove highlight
-                if (enabled)
-                {
-                    QRect clipRect;
-                    if (!groovePixmapName.isEmpty())
-                        groovePixmapName += "_blue"_L1;
-                    if (!QPixmapCache::find(groovePixmapName, &cache)) {
-                        cache = styleCachePixmap(pixmapRect.size(), dpr);
-                        QPainter groovePainter(&cache);
-                        QLinearGradient gradient;
-                        if (horizontal) {
-                            gradient.setStart(pixmapRect.center().x(), pixmapRect.top());
-                            gradient.setFinalStop(pixmapRect.center().x(), pixmapRect.bottom());
-                        }
-                        else {
-                            gradient.setStart(pixmapRect.left(), pixmapRect.center().y());
-                            gradient.setFinalStop(pixmapRect.right(), pixmapRect.center().y());
-                        }
-                        QColor highlight = d->highlight(option->palette);
-                        QColor highlightedoutline = highlight.darker(140);
-                        QColor grooveOutline = outline;
-                        if (qGray(grooveOutline.rgb()) > qGray(highlightedoutline.rgb()))
-                            grooveOutline = highlightedoutline;
 
-                        groovePainter.setRenderHint(QPainter::Antialiasing, true);
-                        groovePainter.translate(0.5, 0.5);
-                        groovePainter.setPen(QPen(grooveOutline));
-                        gradient.setColorAt(0, activeHighlight);
-                        gradient.setColorAt(1, activeHighlight.lighter(130));
-                        groovePainter.setBrush(gradient);
-                        groovePainter.drawRoundedRect(pixmapRect.adjusted(1, 1, -2, -2), 1, 1);
-                        groovePainter.setPen(d->innerContrastLine());
-                        groovePainter.setBrush(Qt::NoBrush);
-                        groovePainter.drawRoundedRect(pixmapRect.adjusted(2, 2, -3, -3), 1, 1);
-                        groovePainter.end();
-                        QPixmapCache::insert(groovePixmapName, cache);
-                    }
+                // draw blue groove highlight
+                QRect clipRect;
+                if (!groovePixmapName.isEmpty())
+                    groovePixmapName += "_blue"_L1;
+                if (!QPixmapCache::find(groovePixmapName, &cache)) {
+                    cache = styleCachePixmap(pixmapRect.size(), dpr);
+                    QPainter groovePainter(&cache);
+                    QLinearGradient gradient;
                     if (horizontal) {
-                        if (slider->upsideDown)
-                            clipRect = QRect(handle.right(), groove.top(), groove.right() - handle.right(), groove.height());
-                        else
-                            clipRect = QRect(groove.left(), groove.top(),
-                                             handle.left() - slider->rect.left(), groove.height());
-                    } else {
-                        if (slider->upsideDown)
-                            clipRect = QRect(groove.left(), handle.bottom(), groove.width(), groove.height() - (handle.bottom() - slider->rect.top()));
-                        else
-                            clipRect = QRect(groove.left(), groove.top(), groove.width(), handle.top() - groove.top());
+                        gradient.setStart(pixmapRect.center().x(), pixmapRect.top());
+                        gradient.setFinalStop(pixmapRect.center().x(), pixmapRect.bottom());
                     }
-                    painter->save();
-                    painter->setClipRect(clipRect.adjusted(0, 0, 1, 1), Qt::IntersectClip);
-                    painter->drawPixmap(groove.topLeft(), cache);
-                    painter->restore();
+                    else {
+                        gradient.setStart(pixmapRect.left(), pixmapRect.center().y());
+                        gradient.setFinalStop(pixmapRect.right(), pixmapRect.center().y());
+                    }
+                    QColor highlight = d->highlight(option->palette);
+                    QColor highlightedoutline = highlight.darker(140);
+                    QColor grooveOutline = outline;
+                    if (qGray(grooveOutline.rgb()) > qGray(highlightedoutline.rgb()))
+                        grooveOutline = highlightedoutline;
+
+                    groovePainter.setRenderHint(QPainter::Antialiasing, true);
+                    groovePainter.translate(0.5, 0.5);
+                    groovePainter.setPen(QPen(grooveOutline));
+                    gradient.setColorAt(0, activeHighlight);
+                    gradient.setColorAt(1, activeHighlight.lighter(130));
+                    groovePainter.setBrush(gradient);
+                    groovePainter.drawRoundedRect(pixmapRect.adjusted(1, 1, -2, -2), 1, 1);
+                    groovePainter.setPen(d->innerContrastLine());
+                    groovePainter.setBrush(Qt::NoBrush);
+                    groovePainter.drawRoundedRect(pixmapRect.adjusted(2, 2, -3, -3), 1, 1);
+                    groovePainter.end();
+                    QPixmapCache::insert(groovePixmapName, cache);
                 }
+                if (horizontal) {
+                    if (slider->upsideDown)
+                        clipRect = QRect(handle.right(), groove.top(), groove.right() - handle.right(), groove.height());
+                    else
+                        clipRect = QRect(groove.left(), groove.top(),
+                                         handle.left() - slider->rect.left(), groove.height());
+                } else {
+                    if (slider->upsideDown)
+                        clipRect = QRect(groove.left(), handle.bottom(), groove.width(), groove.height() - (handle.bottom() - slider->rect.top()));
+                    else
+                        clipRect = QRect(groove.left(), groove.top(), groove.width(), handle.top() - groove.top());
+                }
+                painter->save();
+                painter->setClipRect(clipRect.adjusted(0, 0, 1, 1), Qt::IntersectClip);
+                painter->drawPixmap(groove.topLeft(), cache);
+                painter->restore();
             }
 
             if (option->subControls & SC_SliderTickmarks) {

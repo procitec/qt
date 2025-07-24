@@ -48,11 +48,12 @@ void QProtobufGenerator::GenerateSources(const FileDescriptor *file,
     assert(generatorContext != nullptr);
 
     std::string basename = utils::extractFileBasename(file->name());
+    std::string identifier = utils::toValidIdentifier(basename);
     std::string relativePath = common::generateRelativeFilePath(file, basename);
     std::unique_ptr<io::ZeroCopyOutputStream> sourceStream(
                 generatorContext->Open(relativePath + CommonTemplates::ProtoFileSuffix() + ".cpp"));
     std::unique_ptr<io::ZeroCopyOutputStream> registrationStream(
-                generatorContext->Open(relativePath + "_protobuftyperegistrations.cpp"));
+                generatorContext->Open(relativePath + "_qtprotoreg.cpp"));
 
     std::shared_ptr<Printer> sourcePrinter(new Printer(sourceStream.get(), '$'));
     std::shared_ptr<Printer> registrationPrinter(new Printer(registrationStream.get(), '$'));
@@ -65,15 +66,17 @@ void QProtobufGenerator::GenerateSources(const FileDescriptor *file,
 
     printIncludes(registrationPrinter.get(), internalIncludes, externalIncludes, {});
 
-    bool generateWellknownTimestamp = false;
     common::iterateMessages(file, [&](const Descriptor *message) {
         if (message->full_name() == "google.protobuf.Timestamp") {
-            generateWellknownTimestamp = true;
-            return;
+            externalIncludes.insert("QtCore/QTimeZone");
+            externalIncludes.insert("QtProtobufWellKnownTypes/private/"
+                                    "qprotobufwellknowntypesjsonserializers_p.h");
+        } else if (common::hasCustomJsonCoversion(message)) {
+            externalIncludes.insert("QtProtobufWellKnownTypes/private/"
+                                    "qprotobufwellknowntypesjsonserializers_p.h");
         }
     });
-    if (generateWellknownTimestamp)
-        externalIncludes.insert("QtCore/QTimeZone");
+
     printIncludes(sourcePrinter.get(), internalIncludes, externalIncludes, { "cmath" });
 
     OpenFileNamespaces(file, sourcePrinter.get());
@@ -92,7 +95,7 @@ void QProtobufGenerator::GenerateSources(const FileDescriptor *file,
         messageDef.printClassRegistration(registrationPrinter.get());
     });
 
-    registrationPrinter->Print({{"proto_name", utils::capitalizeAsciiName(basename)}},
+    registrationPrinter->Print({{"proto_name", utils::capitalizeAsciiName(identifier)}},
                                CommonTemplates::ProtobufTypeRegistrarTemplate());
 
     CloseFileNamespaces(file, registrationPrinter.get());
@@ -113,6 +116,7 @@ void QProtobufGenerator::GenerateHeader(const FileDescriptor *file,
 
     const std::string basename = utils::extractFileBasename(file->name()) +
         CommonTemplates::ProtoFileSuffix();
+    std::string identifier = utils::toValidIdentifier(basename);
     std::string relativePath = common::generateRelativeFilePath(file, basename);
 
     std::unique_ptr<io::ZeroCopyOutputStream>
@@ -126,7 +130,7 @@ void QProtobufGenerator::GenerateHeader(const FileDescriptor *file,
     std::set<std::string> systemIncludes;
 
     const std::string
-        headerGuard = common::headerGuardFromFilename(basename + CommonTemplates::HeaderSuffix());
+        headerGuard = common::headerGuardFromFilename(identifier + CommonTemplates::HeaderSuffix());
     headerPrinter->Print({{"header_guard", headerGuard}}, CommonTemplates::PreambleTemplate());
     if (!Options::instance().exportMacroFilename().empty()) {
         std::string exportMacroFilename = Options::instance().exportMacroFilename();
@@ -149,39 +153,36 @@ void QProtobufGenerator::GenerateHeader(const FileDescriptor *file,
         externalIncludes.insert("QtQml/qqmllist.h");
     }
 
-    bool hasOneofFields = false;
-    bool hasOptionalFields = false;
     std::unordered_set<std::string> qtTypesSet;
-    common::iterateMessages(
-            file, [&](const Descriptor *message) {
-                if (message->oneof_decl_count() > 0)
-                    hasOneofFields = true;
 
-                if (message->full_name() == "google.protobuf.Timestamp") {
-                    externalIncludes.insert("QtCore/QDateTime");
-                }
-                if (message->full_name() == "google.protobuf.Any")
-                    externalIncludes.insert("QtProtobufWellKnownTypes/qprotobufanysupport.h");
+    const auto collectSpecialIncludes = [&](const Descriptor *message) {
+        if (message->oneof_decl_count() > 0)
+            externalIncludes.insert("QtProtobuf/qprotobufoneof.h");
 
-                for (int i = 0; i < message->field_count(); ++i) {
-                    const auto *field = message->field(i);
-                    if (field->type() == FieldDescriptor::TYPE_MESSAGE && !field->is_map()
-                        && !field->is_repeated() && common::isQtType(field)) {
-                        externalIncludes.insert(field->message_type()->file()->package()
-                                                + "/" + field->message_type()->name());
-                        qtTypesSet.insert(field->message_type()->file()->package());
-                    }
+        if (message->full_name() == "google.protobuf.Timestamp")
+            externalIncludes.insert("QtCore/QDateTime");
 
-                    if (common::isOptionalField(field))
-                        hasOptionalFields = true;
-                }
-            });
+        if (message->full_name() == "google.protobuf.Any")
+            externalIncludes.insert("QtProtobufWellKnownTypes/qprotobufanysupport.h");
 
-    if (hasOneofFields)
-        externalIncludes.insert("QtProtobuf/qprotobufoneof.h");
+        for (int i = 0; i < message->field_count(); ++i) {
+            const auto *field = message->field(i);
+            if (field->type() == FieldDescriptor::TYPE_MESSAGE && !field->is_map()
+                && !field->is_repeated() && common::isQtType(field)) {
+                externalIncludes.insert(field->message_type()->file()->package()
+                                        + "/" + field->message_type()->name());
+                qtTypesSet.insert(field->message_type()->file()->package());
+            }
 
-    if (hasOptionalFields)
-        systemIncludes.insert("optional");
+            if (common::isOptionalField(field))
+                systemIncludes.insert("optional");
+        }
+    };
+
+    common::iterateMessages(file, [&collectSpecialIncludes](const Descriptor *message){
+        collectSpecialIncludes(message);
+        common::iterateNestedMessages(message, collectSpecialIncludes);
+    });
 
     for (const auto &qtTypeInclude: qtTypesSet) {
         std::string qtTypeLower = qtTypeInclude;
@@ -219,6 +220,13 @@ void QProtobufGenerator::GenerateHeader(const FileDescriptor *file,
         MessageDeclarationPrinter messageDecl(message, headerPrinter);
         messageDecl.printClassForwardDeclaration();
     });
+
+    headerPrinter->Print("#ifdef QT_USE_PROTOBUF_LIST_ALIASES\n");
+    common::iterateMessages(file, [&headerPrinter](const Descriptor *message) {
+        headerPrinter->Print(common::produceMessageTypeMap(message, nullptr),
+                             CommonTemplates::UsingListTemplate());
+    });
+    headerPrinter->Print("#endif // QT_USE_PROTOBUF_LIST_ALIASES\n");
 
     common::iterateMessages(
                 file,

@@ -12,7 +12,7 @@ Configurations:
     Id: 'ubuntu-22.04-documentation'
     Template: 'qtci-linux-Ubuntu-22.04-x86_64-51'
     Compiler: 'GCC'
-    Features: ['Sccache', 'Documentation', 'UseConfigure', 'DoNotRunTests']
+    Features: ['Sccache', 'Documentation', 'UseConfigure', 'DoNotRunTests', 'DocsGenerationV2']
     Configure arguments: '-make examples -developer-build -c++std c++20 -linker gold -qtlibinfix TestInfix -qtnamespace TestNamespace'
     Environment variables: ['NON_QTBASE_CMAKE_ARGS=-DFFMPEG_DIR={{.Env.FFMPEG_DIR}} -DQT_DEPLOY_FFMPEG=TRUE']
 -
@@ -30,7 +30,7 @@ Configurations:
     Id: 'ubuntu-22.04-documentation-x11-tests'
     Template: 'qtci-linux-Ubuntu-22.04-x86_64-51'
     Compiler: 'GCC'
-    Features: ['Sccache', 'TestDocs', 'TestOnly']
+    Features: ['Sccache', 'TestDocs', 'TestOnly', 'DocsGenerationV2']
     Platform dependency: 'ubuntu-22.04-documentation'
 -
     Id: 'ubuntu-22.04-x11-tests'
@@ -130,7 +130,7 @@ Configurations:
     ]
 -
     Id: 'windows-10_22h2-msvc2022'
-    Template: 'qtci-windows-10_22H2-x86_64-52'
+    Template: 'qtci-windows-10_22H2-x86_64-53'
     Compiler: 'MSVC2022'
     Features: ['Sccache', "DebugAndRelease", 'UseConfigure', 'GenerateSBOM', 'VerifySBOM']
     Configure arguments: '-debug-and-release -force-debug-info -headersclean -nomake examples -qt-zlib'
@@ -201,22 +201,11 @@ Configurations:
         'CMAKE_ARGS=-DOpenGL_GL_PREFERENCE=LEGACY -DOPENSSL_ROOT_DIR={{.Env.OPENSSL_HOME}}',
         'NON_QTBASE_CMAKE_ARGS=-DFFMPEG_DIR={{.Env.FFMPEG_DIR}} -DQT_DEPLOY_FFMPEG=TRUE -DINPUT_headersclean=ON'
     ]
-
--
-    Id: 'rhel-9.2'
-    Template: 'qtci-linux-RHEL-9.2-x86_64-51'
-    Compiler: 'GCC'
-    Features: ['Sccache', 'UseConfigure', 'InstallQt5Dependencies', 'GenerateSBOM', 'VerifySBOM']
-    Configure arguments: '-nomake examples -release -force-debug-info -headersclean -separate-debug-info -qt-libjpeg -qt-libpng -qt-pcre -qt-harfbuzz -qt-doubleconversion -no-libudev -bundled-xcb-xinput'
-    Environment variables: [
-        'CMAKE_ARGS=-DOpenGL_GL_PREFERENCE=LEGACY',
-        'NON_QTBASE_CMAKE_ARGS=-DFFMPEG_DIR={{.Env.FFMPEG_DIR}} -DQT_DEPLOY_FFMPEG=TRUE -DINPUT_headersclean=ON'
-    ]
 -
     Id: 'rhel-9.4'
     Template: 'qtci-linux-RHEL-9.4-x86_64-50'
     Compiler: 'GCC'
-    Features: ['Sccache', 'UseConfigure', 'InstallQt5Dependencies', 'GenerateSBOM', 'VerifySBOM', 'InsignificantTests']
+    Features: ['Sccache', 'UseConfigure', 'InstallQt5Dependencies', 'GenerateSBOM', 'VerifySBOM']
     Configure arguments: '-nomake examples -release -force-debug-info -headersclean -separate-debug-info -qt-libjpeg -qt-libpng -qt-pcre -qt-harfbuzz -qt-doubleconversion -no-libudev -bundled-xcb-xinput'
     Environment variables: [
         'CMAKE_ARGS=-DOpenGL_GL_PREFERENCE=LEGACY',
@@ -237,7 +226,7 @@ Configurations:
     ]
 -
     Id: 'windows-10_22h2-mingw13'
-    Template: 'qtci-windows-10_22H2-x86_64-52'
+    Template: 'qtci-windows-10_22H2-x86_64-53'
     Compiler: 'Mingw'
     Features: ['Packaging', 'Sccache', 'UseConfigure', 'GenerateSBOM', 'VerifySBOM']
     Configure arguments: '-release -force-debug-info -separate-debug-info -nomake examples'
@@ -298,5 +287,18 @@ Configurations:
         'COIN_EXTRA_DEBIAN_PACKAGES={{.Env.HOME}}/debian_packages/',
         'COIN_SBUILD_CHROOT=jammy-amd64-sbuild',
         'COIN_EXTRA_DEBIAN_REPO=deb http://archive.ubuntu.com/ubuntu/ jammy main universe multiverse',
+        'COIN_SKIP_DEBIAN_MODULES=qt5 qtqa qtactiveqt qtdoc qtwebengine qtwebview',
+    ]
+-
+    Id: 'bookworm-gles-arm64-debian-pkg-packaging'
+    Template: 'qtci-linux-Debian-11.6-aarch64-50'
+    Compiler: 'GCC'
+    Features: ['Packaging','DebianPackaging','DisableTests', 'Insignificant']
+    Environment variables: [
+        'DEBIAN_RULES_REF=6.8_gles',
+        'COIN_TARGET_DIST=tqtc-bookworm',
+        'COIN_EXTRA_DEBIAN_PACKAGES={{.Env.HOME}}/debian_packages/',
+        'COIN_SBUILD_CHROOT=stable-arm64-sbuild',
+        'COIN_EXTRA_DEBIAN_REPO=deb http://deb.debian.org/debian/ bookworm main',
         'COIN_SKIP_DEBIAN_MODULES=qt5 qtqa qtactiveqt qtdoc qtwebengine qtwebview',
     ]

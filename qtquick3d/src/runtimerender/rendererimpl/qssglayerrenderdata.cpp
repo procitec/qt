@@ -407,20 +407,8 @@ const QSSGLayerRenderData::RenderableItem2DEntries &QSSGLayerRenderData::getRend
             return lhsCameraDistanceSq > rhsCameraDistanceSq;
         };
 
-        const auto isItemZOrderLessThan = []
-                (const QSSGRenderItem2D *lhs, const QSSGRenderItem2D *rhs) {
-            if (lhs->parent && rhs->parent && lhs->parent == rhs->parent) {
-                // Same parent nodes, so sort with item z-ordering
-                return lhs->zOrder < rhs->zOrder;
-            }
-            return false;
-        };
-
         // Render furthest to nearest items (parent nodes).
         std::stable_sort(renderedItem2Ds.begin(), renderedItem2Ds.end(), isItemNodeDistanceGreatThan);
-        // Render items inside same node by item z-order.
-        // Note: stable_sort so item order in QML file is respected.
-        std::stable_sort(renderedItem2Ds.begin(), renderedItem2Ds.end(), isItemZOrderLessThan);
     }
 
     return renderedItem2Ds;
@@ -474,6 +462,22 @@ const std::unique_ptr<QSSGPerFrameAllocator> &QSSGLayerRenderData::perFrameAlloc
     return ctx.perFrameAllocator();
 }
 
+void QSSGLayerRenderData::saveRenderState(const QSSGRenderer &renderer)
+{
+    QSSG_CHECK(!savedRenderState.has_value());
+    savedRenderState = std::make_optional<SavedRenderState>({ renderer.m_viewport, renderer.m_scissorRect, renderer.m_dpr });
+}
+
+void QSSGLayerRenderData::restoreRenderState(QSSGRenderer &renderer)
+{
+    QSSG_ASSERT(savedRenderState.has_value(), return);
+
+    renderer.m_viewport = savedRenderState->viewport;
+    renderer.m_scissorRect = savedRenderState->scissorRect;
+    renderer.m_dpr = savedRenderState->dpr;
+    savedRenderState.reset();
+}
+
 static constexpr quint16 PREP_CTX_INDEX_MASK = 0xffff;
 static constexpr QSSGPrepContextId createPrepId(size_t index, quint32 frame) { return QSSGPrepContextId { ((quint64(frame) << 32) | index ) * quint64(index <= std::numeric_limits<quint16>::max()) }; }
 static constexpr size_t getPrepContextIndex(QSSGPrepContextId id) { return (static_cast<quint64>(id) & PREP_CTX_INDEX_MASK); }
@@ -487,7 +491,7 @@ QSSGPrepContextId QSSGLayerRenderData::getOrCreateExtensionContext(const QSSGRen
     QSSG_ASSERT_X(index < PREP_CTX_INDEX_MASK - 1, "Reached maximum entries!", return QSSGPrepContextId::Invalid);
     auto it = std::find_if(extContexts.cbegin(), extContexts.cend(), [&ext, slot](const ExtensionContext &e){ return (e.owner == &ext) && (e.slot == slot); });
     if (it == extContexts.cend()) {
-        extContexts.push_back({ &ext, camera, {/* PS */}, {/* FILTER */}, index, slot });
+        extContexts.push_back(ExtensionContext{ ext, camera, index, slot });
         it = extContexts.cbegin() + index;
         renderableModelStore.emplace_back();
         modelContextStore.emplace_back();
@@ -742,7 +746,12 @@ static constexpr size_t pipelineStateIndex(QSSGRenderablesFilter filter)
         return 2;
     }
 
-    Q_UNREACHABLE_RETURN(0);
+    // GCC 8.x does not treat __builtin_unreachable() as constexpr
+#  if !defined(Q_CC_GNU_ONLY) || (Q_CC_GNU >= 900)
+    // NOLINTNEXTLINE(qt-use-unreachable-return): Triggers on Clang, breaking GCC 8
+    Q_UNREACHABLE();
+#  endif
+    return 0;
 }
 
 void QSSGLayerRenderData::prepareRenderables(QSSGRenderContextInterface &ctx,
@@ -1117,9 +1126,8 @@ QSSGDefaultMaterialPreparationResult QSSGLayerRenderData::prepareDefaultMaterial
     defaultMaterialShaderKeyProperties.m_fogEnabled.setValue(theGeneratedKey, layer.fog.enabled);
 
     // multiview
-    const auto &rhiCtx = renderer->contextInterface()->rhiContext();
-    defaultMaterialShaderKeyProperties.m_viewCount.setValue(theGeneratedKey, rhiCtx->mainPassViewCount());
-    defaultMaterialShaderKeyProperties.m_usesViewIndex.setValue(theGeneratedKey, rhiCtx->mainPassViewCount() >= 2);
+    defaultMaterialShaderKeyProperties.m_viewCount.setValue(theGeneratedKey, layer.viewCount);
+    defaultMaterialShaderKeyProperties.m_usesViewIndex.setValue(theGeneratedKey, layer.viewCount >= 2);
 
     if (!defaultMaterialShaderKeyProperties.m_hasIbl.getValue(theGeneratedKey) && theMaterial->iblProbe) {
         features.set(QSSGShaderFeatures::Feature::LightProbe, true);
@@ -1343,8 +1351,7 @@ QSSGDefaultMaterialPreparationResult QSSGLayerRenderData::prepareCustomMaterialF
     defaultMaterialShaderKeyProperties.m_fogEnabled.setValue(theGeneratedKey, layer.fog.enabled);
 
     // multiview
-    const auto &rhiCtx = renderer->contextInterface()->rhiContext();
-    defaultMaterialShaderKeyProperties.m_viewCount.setValue(theGeneratedKey, rhiCtx->mainPassViewCount());
+    defaultMaterialShaderKeyProperties.m_viewCount.setValue(theGeneratedKey, layer.viewCount);
     defaultMaterialShaderKeyProperties.m_usesViewIndex.setValue(theGeneratedKey,
         inMaterial.m_renderFlags.testFlag(QSSGRenderCustomMaterial::RenderFlag::ViewIndex));
 
@@ -1732,7 +1739,7 @@ bool QSSGLayerRenderData::prepareModelsForRender(QSSGRenderContextInterface &con
             if (maybeDebugDraw && debugDrawSystem->isEnabled(QSSGDebugDrawSystem::Mode::MeshLodNormal))
                 debugDrawSystem->debugNormals(*bufferManager, theModelContext, theSubset, subsetLevelOfDetail, (theModelCenter - allCameras[0]->getGlobalPos()).length() * 0.01);
 
-            static auto checkF32TypeIndex = [&rhiCtx](QRhiVertexInputAttribute::Format f) {
+            auto checkF32TypeIndex = [&rhiCtx](QRhiVertexInputAttribute::Format f) {
                 if ((f ==  QRhiVertexInputAttribute::Format::Float4)
                         || (f == QRhiVertexInputAttribute::Format::Float3)
                         || (f == QRhiVertexInputAttribute::Format::Float2)
@@ -2316,7 +2323,10 @@ void QSSGLayerRenderData::prepareForRender()
             if (cam->getGlobalState(QSSGRenderCamera::GlobalState::Active))
                 renderedCameras.append(cam);
         }
-    } else { // this path can never be hit with multiview
+    } else if (QSSG_GUARD_X(layer.viewCount == 1, "Multiview rendering requires explicit cameras to be set!.")) {
+        // NOTE: This path can never be hit with multiview, hence the guard.
+        // (Multiview will always have explicit cameras set.)
+
         // 3.
         for (auto iter = cameras.cbegin(); renderedCameras.isEmpty() && iter != cameras.cend(); iter++) {
             QSSGRenderCamera *theCamera = *iter;
@@ -2494,9 +2504,9 @@ void QSSGLayerRenderData::prepareForRender()
     if (animating)
         layer.progAAPassIndex = 0;
 
-    const bool progressiveAA = layer.antialiasingMode == QSSGRenderLayer::AAMode::ProgressiveAA && !animating;
+    const bool progressiveAA = layer.isProgressiveAAEnabled() && !animating;
     layer.progressiveAAIsActive = progressiveAA;
-    const bool temporalAA = layer.temporalAAEnabled && !progressiveAA &&  layer.antialiasingMode != QSSGRenderLayer::AAMode::MSAA;
+    const bool temporalAA = layer.isTemporalAAEnabled() && !progressiveAA;
 
     layer.temporalAAIsActive = temporalAA;
 
@@ -2634,6 +2644,7 @@ void QSSGLayerRenderData::resetForFrame()
     hasDepthWriteObjects = false;
     depthPrepassObjectsState = { DepthPrepassObjectStateT(DepthPrepassObject::None) };
     zPrePassActive = false;
+    savedRenderState.reset();
 
     clearTable(renderableModelStore);
     clearTable(modelContextStore);
@@ -2675,8 +2686,9 @@ QSSGCameraGlobalCalculationResult QSSGLayerRenderPreparationResult::setupCameraF
     const float horizontalMagnification = inCamera.horizontalMagnification;
     const float verticalMagnification = inCamera.verticalMagnification;
     inCamera.dpr = dpr;
-    inCamera.horizontalMagnification *= layer->ssaaEnabled ? layer->ssaaMultiplier : 1.0f;
-    inCamera.verticalMagnification *= layer->ssaaEnabled ? layer->ssaaMultiplier : 1.0f;
+    const float ssaaMultiplier = layer->isSsaaEnabled() ? layer->ssaaMultiplier : 1.0f;
+    inCamera.horizontalMagnification *= ssaaMultiplier;
+    inCamera.verticalMagnification *= ssaaMultiplier;
     const auto result = inCamera.calculateGlobalVariables(viewport);
     inCamera.horizontalMagnification = horizontalMagnification;
     inCamera.verticalMagnification = verticalMagnification;
@@ -2688,6 +2700,7 @@ QSSGLayerRenderData::QSSGLayerRenderData(QSSGRenderLayer &inLayer, QSSGRenderer 
     , renderer(&inRenderer)
     , particlesEnabled(checkParticleSupport(inRenderer.contextInterface()->rhi()))
 {
+    Q_ASSERT(extContexts.size() == 1);
 }
 
 QSSGLayerRenderData::~QSSGLayerRenderData()

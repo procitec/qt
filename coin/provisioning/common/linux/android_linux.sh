@@ -26,17 +26,12 @@ toolsVersion="2.1"
 toolsFile="commandlinetools-linux-6609375_latest.zip"
 ndkVersionLatest="r26b"
 ndkVersionDefault=$ndkVersionLatest
-sdkBuildToolsVersion="34.0.0"
-sdkApiLevel="android-34"
+sdkBuildToolsVersion="35.0.1"
+sdkApiLevel="android-35"
 
 toolsSha1="9172381ff070ee2a416723c1989770cf4b0d1076"
 ndkSha1Latest="fdf33d9f6c1b3f16e5459d53a82c7d2201edbcc4"
 ndkSha1Default=$ndkSha1Latest
-
-# Android 14 avd zip
-android14SystemZipName="android14system_UE1A_230829_036.tar.gz"
-android14SystemZipSha="ede80c6901e8fad1895c97a86542b8e072bb1ee5"
-android14SystemPath="$basePath/$android14SystemZipName"
 
 # Android Automotive max SDK level image
 sdkApiLevelAutomotiveMax="android-34"
@@ -136,12 +131,12 @@ cd "$sdkTargetFolder/cmdline-tools/tools/bin"
 ./sdkmanager --install "emulator" --sdk_root="$sdkTargetFolder" \
     | eval "$sdkmanager_no_progress_bar_cmd"
 
-echo "Download and unzip Android Emulator version 34.1.19"
-emulatorFileName="emulator-linux_x64-11525734.zip"
+echo "Download and unzip Android Emulator version 35.2.10"
+emulatorFileName="emulator-linux_x64-12414864.zip"
 emulatorCiUrl="https://ci-files01-hki.ci.qt.io/input/android/$emulatorFileName"
 emulatorUrl="http://dl.google.com/android/repository/$emulatorFileName"
 emulatorTargetFile="$sdkTargetFolder/$emulatorFileName"
-emulatorSha1="d6cc94109b081c5f6042dcb71a453144f7e62ce7"
+emulatorSha1="41dd213d120f727d8c3840347d234b135793ba10"
 DownloadURL "$emulatorCiUrl" "$emulatorUrl" "$emulatorSha1" "$emulatorTargetFile"
 echo "Unzipping the Android Emulator to '$sdkTargetFolder'"
 sudo unzip -o -q "$emulatorTargetFile" -d "$sdkTargetFolder"
@@ -162,22 +157,26 @@ echo "Unzipping the Android 9 to $minVersionDestination"
 sudo unzip -o -q "$minVersionFilePath" -d "$minVersionDestination"
 rm "$minVersionFilePath"
 
-echo "y" | ./sdkmanager --install "system-images;android-35;google_apis;x86_64" \
-    | eval "$sdkmanager_no_progress_bar_cmd"
+echo "Download and unzip Android 15 System Image"
+maxVersionFileName="x86_64-35_r08.zip"
+maxVersionDestination="$sdkTargetFolder/system-images/android-35/google_apis/"
+maxVersionFilePath="$maxVersionDestination/$maxVersionFileName"
+maxVersionCiUrl="$basePath/system-images/google_apis/$maxVersionFileName"
+maxVersionUrl="https://dl.google.com/android/repository/sys-img/google_apis/$maxVersionFileName"
+maxVersionSha1="d79169884cabc6680cb29d32c2112ad46c858c1b"
 
-echo "Extract stored Android 14 Beta $android14SystemZipName"
-DownloadURL "$android14SystemPath" "$android14SystemPath" "$android14SystemZipSha" \
-    "/tmp/$android14SystemZipName"
-sudo tar -xzf "/tmp/$android14SystemZipName" -C "$sdkTargetFolder/system-images"
+mkdir -p "$maxVersionDestination"
+DownloadURL "$maxVersionCiUrl" "$maxVersionUrl" "$maxVersionSha1" "$maxVersionFilePath"
+
+echo "Unzipping the Android 15 to $maxVersionDestination"
+sudo unzip -o -q "$maxVersionFilePath" -d "$maxVersionDestination"
+rm "$maxVersionFilePath"
 
 echo "Checking the contents of Android SDK again..."
 ls -l "$sdkTargetFolder"
 
 echo "no" | ./avdmanager create avd -n emulator_x86_api_28 -c 2048M -f \
     -k "system-images;android-28;google_apis;x86"
-
-echo "no" | ./avdmanager create avd -n emulator_x86_64_api_34 -c 2048M -f \
-    -k "system-images;android-34;google_apis;x86_64"
 
 echo "no" | ./avdmanager create avd -n emulator_x86_64_api_35 -c 2048M -f \
     -k "system-images;android-35;google_apis;x86_64"

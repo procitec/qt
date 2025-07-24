@@ -658,9 +658,11 @@ Q_GUI_EXPORT QDataStream &operator>>(QDataStream &stream, QTextTableCellFormat &
     \omitvalue LastFontProperty
 
     \value TextUnderlineColor      Specifies the color to draw underlines, overlines and strikeouts.
-    \value TextVerticalAlignment
-    \value TextOutline
-    \value TextUnderlineStyle
+    \value TextVerticalAlignment   Specifies the type of text vertical alignment according to
+                                   the values of the QTextCharFormat::VerticalAlignment enum.
+    \value TextOutline             Specifies a \l QPen used to draw the text outline.
+    \value TextUnderlineStyle      Specifies the style of text underline according to
+                                   the values of the QTextCharFormat::UnderlineStyle enum.
     \value TextToolTip Specifies the (optional) tool tip to be displayed for a fragment of text.
     \value TextSuperScriptBaseline Specifies the baseline (in % of height) of superscript texts.
     \value TextSubScriptBaseline   Specifies the baseline (in % of height) of subscript texts.
@@ -912,9 +914,7 @@ QTextFormat &QTextFormat::operator=(const QTextFormat &rhs)
 /*!
     \fn void QTextFormat::swap(QTextFormat &other)
     \since 5.0
-
-    Swaps this text format with \a other. This function is very fast
-    and never fails.
+    \memberswap{text format}
 */
 
 /*!
@@ -3291,7 +3291,7 @@ QTextTableFormat::QTextTableFormat(const QTextFormat &fmt)
     \fn void QTextTableFormat::setBorderCollapse(bool borderCollapse)
     \since 5.14
 
-    Enabling \a borderCollapse will have the following implications:
+    By default, \l borderCollapse() is \c true, which has the following implications:
     \list
     \li The borders and grid of the table will be rendered following the
         CSS table \c border-collapse: \c collapse rules
@@ -3308,9 +3308,11 @@ QTextTableFormat::QTextTableFormat(const QTextFormat &fmt)
         \endlist
     \endlist
 
-    With borderCollapse disabled, cell borders can still be styled
+    With \a borderCollapse set to \c false, cell borders can still be styled
     using QTextTableCellFormat but styling will be applied only within
     the cell's frame, which is probably not very useful in practice.
+
+    \note In Qt versions prior to 6.8, the default value was \c false.
 
     \sa setBorder(), setBorderBrush(), setBorderStyle()
     \sa QTextTableCellFormat
@@ -3320,7 +3322,7 @@ QTextTableFormat::QTextTableFormat(const QTextFormat &fmt)
     \fn bool QTextTableFormat::borderCollapse() const
     \since 5.14
 
-    Returns true if borderCollapse is enabled.
+    Returns \c true if table borders are to be collapsed. The default is \c true.
 
     \sa setBorderCollapse()
 */

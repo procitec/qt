@@ -73,7 +73,7 @@ public:
     virtual QString fileBase(const Node *node) const;
 
 protected:
-    static QFile *openSubPageFile(const Node *node, const QString &fileName);
+    static QFile *openSubPageFile(const PageNode *node, const QString &fileName);
     void beginSubPage(const Node *node, const QString &fileName);
     void endSubPage();
     [[nodiscard]] virtual QString fileExtension() const = 0;
@@ -135,7 +135,8 @@ protected:
     bool parseArg(const QString &src, const QString &tag, int *pos, int n, QStringView *contents,
                   QStringView *par1 = nullptr);
     void unknownAtom(const Atom *atom);
-    int appendSortedQmlNames(Text &text, const Node *base, const NodeList &subs);
+    int appendSortedQmlNames(Text &text, const Node *base, const QStringList &knownTypes,
+                             const NodeList &subs);
 
     static bool hasExceptions(const Node *node, NodeList &reentrant, NodeList &threadsafe,
                               NodeList &nonreentrant);

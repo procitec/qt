@@ -87,7 +87,7 @@ QAbstractLight::Type QAbstractLight::type() const
 }
 
 /*!
- *  \qmlproperty QColor Qt3D.Render.Light::color
+ *  \qmlproperty color Qt3D.Render.Light::color
  *
  *  Holds the current Light color.
  */
@@ -112,7 +112,7 @@ void QAbstractLight::setColor(const QColor &c)
 }
 
 /*!
-    \qmlproperty float Qt3D.Render.Light::intensity
+    \qmlproperty real Qt3D.Render.Light::intensity
 
     Holds the current Light intensity.
 */

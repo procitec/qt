@@ -27,7 +27,6 @@ macro.ouml.HTML           = "&ouml;"
 macro.ouml.DocBook        = "&#246;"
 macro.nothing             = "\\dontdocument ()"
 macro.nullptr             = "\\c{nullptr}"
-macro.Q_OBJECT            = "Q_OBJECT"
 macro.QtVersion           = "$QT_VERSION"
 macro.QtVer               = "$QT_VER"
 macro.param               = "\\e"
@@ -91,11 +90,11 @@ macro.NdkFullVer          = "26.1.10909125"
 macro.NdkCompilerVer      = "Clang 17.0.2"
 macro.JdkVer              = "17"
 macro.AndroidMinApiVer    = "28"
-macro.AndroidMaxApiVer    = "34"
+macro.AndroidMaxApiVer    = "35"
 macro.AndroidMinVer       = "9"
-macro.AndroidMaxVer       = "14"
-macro.AndroidPlatformVer  = "34"
-macro.AndroidBuildToolsVer = "34.0.0"
+macro.AndroidMaxVer       = "15"
+macro.AndroidPlatformVer  = "35"
+macro.AndroidBuildToolsVer = "35.0.1"
 macro.GradleVer           = "8.10"
 macro.AGPVer              = "8.6.0"
 macro.AAOSVer             = "10 to 13"
@@ -127,8 +126,9 @@ macro.QtMinorVersion.match  = "\\d+\\.(\\d+)"
 # along with the offline docs, you must specify it manually. In .qdocconf, to do it for all formats
 # at once, add:
 #
-# {HTML.extraimages,qhp.QtDoc.extraFiles, DocBook.extraimages} += images/dQw4w9WgXcQ.jpg
+# {HTML.extraimages,qhp.<qhp_project>.extraFiles,DocBook.extraimages} += images/dQw4w9WgXcQ.jpg
 #
+# Where <qhp_project> is a project name listed in `qhp.projects`.
 macro.youtube.HTML = "<div class=\"video\">\n" \
                      "<a href=\"https://www.youtube.com/watch/?v=\1\">\n"\
                      "<img src=\"images/\1.jpg\"" \
@@ -173,3 +173,4 @@ macro.qtpolicydeprecatedbehavior = "\\note The \\c{OLD} behavior of a policy is 
 macro.techpreview = "(Technical preview)\n\n\\meta status {Technical preview}\n\\ingroup tech_preview\n"
 
 include(grid.qdocconf)
+include(cpp-doc-macros.qdocconf)

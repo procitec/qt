@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QLOGVALUE3DAXISFORMATTER_H
-#define QLOGVALUE3DAXISFORMATTER_H
+#ifndef QTGRAPHS_QLOGVALUE3DAXISFORMATTER_H
+#define QTGRAPHS_QLOGVALUE3DAXISFORMATTER_H
 
 #include <QtGraphs/qvalue3daxisformatter.h>
 

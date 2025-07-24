@@ -460,7 +460,7 @@ QMetaType QMetaObject::metaType() const
 
     The offset is the sum of all the methods in the class's
     superclasses (which is always positive since QObject has the
-    deleteLater() slot and a destroyed() signal).
+    \l{QObject::}{deleteLater()} slot and a \l{QObject::}{destroyed()} signal).
 
     \sa method(), methodCount(), indexOfMethod()
 */
@@ -503,7 +503,7 @@ int QMetaObject::enumeratorOffset() const
 
     The offset is the sum of all the properties in the class's
     superclasses (which is always positive since QObject has the
-    name() property).
+    \l{QObject::}{objectName} property).
 
     \sa property(), propertyCount(), indexOfProperty()
 */
@@ -1787,9 +1787,7 @@ bool QMetaObject::invokeMethodImpl(QObject *object, QtPrivate::QSlotObjectBase *
 /*!
     \fn QMetaObject::Connection::swap(Connection &other)
     \since 5.15
-
-    Swaps this Connection instance with \a other. This operation is very fast
-    and never fails.
+    \memberswap{Connection instance}
 */
 
 /*!
@@ -3440,7 +3438,7 @@ int QMetaEnum::Data::index(const QMetaObject *mobj) const
 
     \section1 Property Meta-Data
 
-    A property has a name() and a type(), as well as various
+    A property has a name() and a metaType(), as well as various
     attributes that specify its behavior: isReadable(), isWritable(),
     isDesignable(), isScriptable(), revision(), and isStored().
 

@@ -1,4 +1,0 @@
-include_rules = [
-  '+partition_alloc',
-  '+third_party/icu',
-]

@@ -226,6 +226,10 @@ void QQuickLayoutItemProxy::setTarget(QQuickItem *newTarget)
     if (newTarget == d->target)
         return;
 
+    if (d->target && d->target->property("QQuickLayoutItemProxyAttachedData").isValid()) {
+        QQuickLayoutItemProxyAttachedData *attachedData = d->target->property("QQuickLayoutItemProxyAttachedData").value<QQuickLayoutItemProxyAttachedData*>();
+        attachedData->releaseProxy(this);
+    }
     d->target = newTarget;
 
     if (newTarget) {
@@ -408,6 +412,9 @@ QQuickLayoutItemProxyAttachedData::QQuickLayoutItemProxyAttachedData(QObject *pa
 
 QQuickLayoutItemProxyAttachedData::~QQuickLayoutItemProxyAttachedData()
 {
+    if (QObject *par = parent())
+        par->setProperty("QQuickLayoutItemProxyAttachedData", QVariant());
+
     // If this is destroyed, so is the target. Clear the target from the
     // proxies so they do not try to access a destroyed object
     for (auto &proxy: std::as_const(proxies))

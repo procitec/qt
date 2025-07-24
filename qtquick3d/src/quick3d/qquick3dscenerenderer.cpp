@@ -57,7 +57,11 @@ Q_TRACE_POINT(qtquick3d, QSSG_synchronize_exit);
 Q_TRACE_POINT(qtquick3d, QSSG_renderPass_entry, const QString &renderPass);
 Q_TRACE_POINT(qtquick3d, QSSG_renderPass_exit);
 
-static bool dumpRenderTimes = false;
+static bool dumpRenderTimes()
+{
+    static bool val = (qEnvironmentVariableIntValue("QT_QUICK3D_DUMP_RENDERTIMES") > 0);
+    return val;
+}
 
 #if QT_CONFIG(qml_debug)
 
@@ -167,12 +171,12 @@ void SGFramebufferObjectNode::render()
         emit textureChanged();
 
         if (renderer->renderStats())
-            renderer->renderStats()->endRender(dumpRenderTimes);
+            renderer->renderStats()->endRender(dumpRenderTimes());
 
-        if (renderer->requestedFramesCount > 0) {
+        if (renderer->m_requestedFramesCount > 0) {
             scheduleRender();
             requestFullUpdate(window);
-            renderer->requestedFramesCount--;
+            renderer->m_requestedFramesCount--;
         }
     }
 }
@@ -189,7 +193,6 @@ void SGFramebufferObjectNode::handleScreenChange()
 QQuick3DSceneRenderer::QQuick3DSceneRenderer(const std::shared_ptr<QSSGRenderContextInterface> &rci)
     : m_sgContext(rci)
 {
-    dumpRenderTimes = (qEnvironmentVariableIntValue("QT_QUICK3D_DUMP_RENDERTIMES") > 0);
 }
 
 QQuick3DSceneRenderer::~QQuick3DSceneRenderer()
@@ -309,8 +312,8 @@ QRhiTexture *QQuick3DSceneRenderer::renderToRhiTexture(QQuickWindow *qw)
         int ssaaAdjustedWidth = m_surfaceSize.width();
         int ssaaAdjustedHeight = m_surfaceSize.height();
         if (m_layer->antialiasingMode == QSSGRenderLayer::AAMode::SSAA) {
-            ssaaAdjustedWidth *= m_ssaaMultiplier;
-            ssaaAdjustedHeight *= m_ssaaMultiplier;
+            ssaaAdjustedWidth *= m_layer->ssaaMultiplier;
+            ssaaAdjustedHeight *= m_layer->ssaaMultiplier;
         }
 
         Q_TRACE(QSSG_prepareFrame_entry, ssaaAdjustedWidth, ssaaAdjustedHeight);
@@ -365,7 +368,7 @@ QRhiTexture *QQuick3DSceneRenderer::renderToRhiTexture(QQuickWindow *qw)
             QRhiTexture *theDepthTexture = theRenderData->getRenderResult(QSSGFrameData::RenderResult::DepthTexture)->texture;
             QVector2D cameraClipRange(m_layer->renderedCameras[0]->clipNear, m_layer->renderedCameras[0]->clipFar);
 
-            currentTexture = m_effectSystem->process(*m_layer->firstEffect,
+            currentTexture = m_effectSystem->process(*m_layer,
                                                      currentTexture,
                                                      theDepthTexture,
                                                      cameraClipRange);
@@ -473,7 +476,7 @@ QRhiTexture *QQuick3DSceneRenderer::renderToRhiTexture(QQuickWindow *qw)
             // flipping based on QSHADER_ macros) This is just better for
             // performance and the shaders are very simple so introducing a
             // uniform block and branching dynamically would be an overkill.
-            const auto &shaderPipeline = m_sgContext->shaderCache()->getBuiltInRhiShaders().getRhiSupersampleResolveShader(rhiCtx->mainPassViewCount());
+            const auto &shaderPipeline = m_sgContext->shaderCache()->getBuiltInRhiShaders().getRhiSupersampleResolveShader(m_layer->viewCount);
 
             QRhiSampler *sampler = rhiCtx->sampler({ QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
                                                      QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge, QRhiSampler::Repeat });
@@ -483,7 +486,7 @@ QRhiTexture *QQuick3DSceneRenderer::renderToRhiTexture(QQuickWindow *qw)
 
             QSSGRhiGraphicsPipelineState ps;
             ps.viewport = QRhiViewport(0, 0, float(m_surfaceSize.width()), float(m_surfaceSize.height()));
-            ps.viewCount = rhiCtx->mainPassViewCount();
+            ps.viewCount = m_layer->viewCount;
             QSSGRhiGraphicsPipelineStatePrivate::setShaderPipeline(ps, shaderPipeline.get());
 
             renderer->rhiQuadRenderer()->recordRenderQuadPass(rhiCtx, &ps, srb, m_ssaaTextureToTextureRenderTarget, QSSGRhiQuadRenderer::UvCoords);
@@ -652,6 +655,37 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
     if (!m_layer)
         m_layer = new QSSGRenderLayer();
 
+    // Update the layer node properties
+    // Store the view count in the layer. If there are multiple, or nested views, sync is called multiple times and the view count
+    // can change (see: updateLayerNode()), so we need to store the value on the layer to make sure we don't end up with a mismatch
+    // between between the view count of the views rendering directly to the screen (XrView instance) and the view count of the offscreen
+    // rendered View3Ds.
+    // See also: preSynchronize(), queryMainRenderPassDescriptorAndCommandBuffer() and queryInlineRenderPassDescriptorAndCommandBuffer()
+    // (At this point the mainPassViewCount for this view should be set to the correct value)
+    m_layer->viewCount = rhiCtx->mainPassViewCount();
+    updateLayerNode(*m_layer, *view3D, resourceLoaders.values());
+
+    // Request extra frames for antialiasing (ProgressiveAA/TemporalAA)
+
+    m_requestedFramesCount = 0;
+    if (m_layer->isProgressiveAAEnabled()) {
+        // with progressive AA, we need a number of extra frames after the last dirty one
+        // if we always reset requestedFramesCount when dirty, we will get the extra frames eventually
+        // +1 since we need a normal frame to start with, and we're not copying that from the screen
+        m_requestedFramesCount = int(m_layer->antialiasingQuality) + 1;
+    } else if (m_layer->isTemporalAAEnabled()) {
+        // When temporalAA is on and antialiasing mode changes,
+        // layer needs to be re-rendered (at least) MAX_TEMPORAL_AA_LEVELS times
+        // to generate temporal antialiasing.
+        // Also, we need to do an extra render when animation stops
+        m_requestedFramesCount = (m_aaIsDirty || m_temporalIsDirty) ? QSSGLayerRenderData::MAX_TEMPORAL_AA_LEVELS : 1;
+    }
+
+    // Now that we have the effect list used for rendering, finalize the shader
+    // code based on the layer (scene.env.) settings.
+    for (QSSGRenderEffect *effectNode = m_layer->firstEffect; effectNode; effectNode = effectNode->m_nextEffect)
+        effectNode->finalizeShaders(*m_layer, m_sgContext.get());
+
     if (newRenderStats)
         m_renderStats->setRhiContext(rhiCtx, m_layer);
 
@@ -679,9 +713,6 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
 
         view3D->clearExtensionListDirty();
     }
-
-    // Update the layer node properties
-    updateLayerNode(view3D, resourceLoaders.values());
 
     bool postProcessingNeeded = m_layer->firstEffect;
     bool postProcessingWasActive = m_effectSystem;
@@ -827,18 +858,9 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
         }
     }
 
-    const bool progressiveAA = m_layer->antialiasingMode == QSSGRenderLayer::AAMode::ProgressiveAA;
-    const bool multiSamplingAA = m_layer->antialiasingMode == QSSGRenderLayer::AAMode::MSAA;
-    const bool temporalAA = m_layer->temporalAAEnabled && !multiSamplingAA;
-    const bool superSamplingAA = m_layer->antialiasingMode == QSSGRenderLayer::AAMode::SSAA;
-    const bool timeBasedAA = progressiveAA || temporalAA;
-    m_postProcessingStack = m_layer->firstEffect || timeBasedAA  || superSamplingAA;
-    bool useFBO = view3D->renderMode() == QQuick3DViewport::RenderMode::Offscreen ||
-                                          ((view3D->renderMode() == QQuick3DViewport::RenderMode::Underlay || view3D->renderMode() == QQuick3DViewport::RenderMode::Overlay)
-                                           && m_postProcessingStack);
-    if (useFBO && rhiCtx->isValid()) {
+    if (m_useFBO && rhiCtx->isValid()) {
         QRhi *rhi = rhiCtx->rhi();
-        const QSize renderSize = superSamplingAA ? m_surfaceSize * m_ssaaMultiplier : m_surfaceSize;
+        const QSize renderSize = m_layer->isSsaaEnabled() ? m_surfaceSize * m_layer->ssaaMultiplier : m_surfaceSize;
 
         if (m_texture) {
             // the size changed, or the AA settings changed, or toggled between some effects - no effect
@@ -856,7 +878,7 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
                     // MSAA and texture for SSAA may need a different
                     // format now since m_texture's format could have
                     // changed between RBGA8 and RGBA16F (due to layerTextureFormat()).
-                    if (postProcessingStateDirty && (m_layer->antialiasingMode != QSSGRenderLayer::AAMode::NoAA || temporalAA)) {
+                    if (postProcessingStateDirty && (m_layer->antialiasingMode != QSSGRenderLayer::AAMode::NoAA || m_layer->isTemporalAAEnabled())) {
                         releaseAaDependentRhiResources();
                     } else {
                         if (m_ssaaTexture) {
@@ -917,22 +939,22 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
         const QRhiTexture::Format textureFormat = layerTextureFormat(rhi, postProcessingNeeded);
 
         if (!m_texture) {
-            if (rhiCtx->mainPassViewCount() >= 2)
-                m_texture = rhi->newTextureArray(textureFormat, rhiCtx->mainPassViewCount(), m_surfaceSize, 1, textureFlags);
+            if (m_layer->viewCount >= 2)
+                m_texture = rhi->newTextureArray(textureFormat, m_layer->viewCount, m_surfaceSize, 1, textureFlags);
             else
                 m_texture = rhi->newTexture(textureFormat, m_surfaceSize, 1, textureFlags);
             m_texture->create();
         }
 
-        if (!m_ssaaTexture && superSamplingAA) {
-            if (rhiCtx->mainPassViewCount() >= 2)
-                m_ssaaTexture = rhi->newTextureArray(textureFormat, rhiCtx->mainPassViewCount(), renderSize, 1, textureFlags);
+        if (!m_ssaaTexture && m_layer->isSsaaEnabled()) {
+            if (m_layer->viewCount >= 2)
+                m_ssaaTexture = rhi->newTextureArray(textureFormat, m_layer->viewCount, renderSize, 1, textureFlags);
             else
                 m_ssaaTexture = rhi->newTexture(textureFormat, renderSize, 1, textureFlags);
             m_ssaaTexture->create();
         }
 
-        if (timeBasedAA && !m_temporalAATexture) {
+        if (m_timeBasedAA && !m_temporalAATexture) {
             m_temporalAATexture = rhi->newTexture(textureFormat, renderSize, 1, textureFlags);
             m_temporalAATexture->create();
             m_prevTempAATexture = rhi->newTexture(textureFormat, renderSize, 1, textureFlags);
@@ -972,9 +994,9 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
             }
         }
 
-        if (rhiCtx->mainPassViewCount() >= 2) {
+        if (m_layer->viewCount >= 2) {
             if (!m_multiViewDepthStencilBuffer) {
-                m_multiViewDepthStencilBuffer = rhi->newTextureArray(QRhiTexture::D24S8, rhiCtx->mainPassViewCount(), renderSize,
+                m_multiViewDepthStencilBuffer = rhi->newTextureArray(QRhiTexture::D24S8, m_layer->viewCount, renderSize,
                                                                      m_samples, QRhiTexture::RenderTarget);
                 m_multiViewDepthStencilBuffer->create();
             }
@@ -989,8 +1011,8 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
             QRhiTextureRenderTargetDescription rtDesc;
             QRhiColorAttachment att;
             if (m_samples > 1) {
-                if (rhiCtx->mainPassViewCount() >= 2) {
-                    m_msaaMultiViewRenderBuffer = rhi->newTextureArray(textureFormat, rhiCtx->mainPassViewCount(), renderSize, m_samples, QRhiTexture::RenderTarget);
+                if (m_layer->viewCount >= 2) {
+                    m_msaaMultiViewRenderBuffer = rhi->newTextureArray(textureFormat, m_layer->viewCount, renderSize, m_samples, QRhiTexture::RenderTarget);
                     m_msaaMultiViewRenderBuffer->create();
                     att.setTexture(m_msaaMultiViewRenderBuffer);
                 } else {
@@ -1006,7 +1028,7 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
                 else
                     att.setTexture(m_texture);
             }
-            att.setMultiViewCount(rhiCtx->mainPassViewCount());
+            att.setMultiViewCount(m_layer->viewCount);
             rtDesc.setColorAttachments({ att });
             if (m_depthStencilBuffer)
                 rtDesc.setDepthStencilBuffer(m_depthStencilBuffer);
@@ -1022,7 +1044,7 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
 
         if (!m_ssaaTextureToTextureRenderTarget && m_layer->antialiasingMode == QSSGRenderLayer::AAMode::SSAA) {
             QRhiColorAttachment att(m_texture);
-            att.setMultiViewCount(rhiCtx->mainPassViewCount());
+            att.setMultiViewCount(m_layer->viewCount);
             m_ssaaTextureToTextureRenderTarget = rhi->newTextureRenderTarget(QRhiTextureRenderTargetDescription({ att }));
             m_ssaaTextureToTextureRenderTarget->setName(QByteArrayLiteral("SSAA texture"));
             m_ssaaTextureToTextureRenderPassDescriptor = m_ssaaTextureToTextureRenderTarget->newCompatibleRenderPassDescriptor();
@@ -1039,7 +1061,7 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
             m_effectSystem = nullptr;
         }
 
-        if (timeBasedAA && !m_temporalAARenderTarget) {
+        if (m_timeBasedAA && !m_temporalAARenderTarget) {
             m_temporalAARenderTarget = rhi->newTextureRenderTarget({ m_temporalAATexture });
             m_temporalAARenderTarget->setName(QByteArrayLiteral("Temporal AA texture"));
             m_temporalAARenderPassDescriptor = m_temporalAARenderTarget->newCompatibleRenderPassDescriptor();
@@ -1052,7 +1074,7 @@ void QQuick3DSceneRenderer::synchronize(QQuick3DViewport *view3D, const QSize &s
     }
 
     if (m_renderStats)
-        m_renderStats->endSync(dumpRenderTimes);
+        m_renderStats->endSync(dumpRenderTimes());
 
     Q_QUICK3D_PROFILE_END_WITH_ID(QQuick3DProfiler::Quick3DSynchronizeFrame, quint64(m_surfaceSize.width()) | quint64(m_surfaceSize.height()) << 32, profilingId);
 }
@@ -1151,36 +1173,55 @@ QQuick3DRenderStats *QQuick3DSceneRenderer::renderStats()
     return m_renderStats;
 }
 
-void QQuick3DRenderLayerHelpers::updateLayerNodeHelper(const QQuick3DViewport &view3D, QSSGRenderLayer &layerNode, bool &aaIsDirty, bool &temporalIsDirty, float &ssaaMultiplier)
+void QQuick3DRenderLayerHelpers::updateLayerNodeHelper(const QQuick3DViewport &view3D,
+                                                       const std::shared_ptr<QSSGRenderContextInterface>& rci,
+                                                       QSSGRenderLayer &layerNode,
+                                                       bool &aaIsDirty,
+                                                       bool &temporalIsDirty)
+{
+    QList<QSSGRenderGraphObject *> resourceLoaders; // empty list
+
+    QQuick3DSceneRenderer dummyRenderer(rci);
+
+    // Update the layer node properties
+    dummyRenderer.updateLayerNode(layerNode, view3D, resourceLoaders);
+
+    aaIsDirty = dummyRenderer.m_aaIsDirty;
+    temporalIsDirty = dummyRenderer.m_temporalIsDirty;
+}
+
+void QQuick3DSceneRenderer::updateLayerNode(QSSGRenderLayer &layerNode,
+                                            const QQuick3DViewport &view3D,
+                                            const QList<QSSGRenderGraphObject *> &resourceLoaders)
 {
     QQuick3DSceneEnvironment *environment = view3D.environment();
+    const auto &effects = environment->effectList();
 
     QSSGRenderLayer::AAMode aaMode = QSSGRenderLayer::AAMode(environment->antialiasingMode());
     if (aaMode != layerNode.antialiasingMode) {
         layerNode.antialiasingMode = aaMode;
         layerNode.progAAPassIndex = 0;
-        aaIsDirty = true;
+        m_aaIsDirty = true;
     }
     QSSGRenderLayer::AAQuality aaQuality = QSSGRenderLayer::AAQuality(environment->antialiasingQuality());
     if (aaQuality != layerNode.antialiasingQuality) {
         layerNode.antialiasingQuality = aaQuality;
-        ssaaMultiplier = (aaQuality == QSSGRenderLayer::AAQuality::Normal) ? 1.2f :
-                                                                               (aaQuality == QSSGRenderLayer::AAQuality::High) ? 1.5f :
-                                                                                                                                 2.0f;
-        layerNode.ssaaMultiplier = ssaaMultiplier;
-        aaIsDirty = true;
+        layerNode.ssaaMultiplier = QSSGRenderLayer::ssaaMultiplierForQuality(aaQuality);
+        m_aaIsDirty = true;
     }
 
-    bool temporalAAEnabled = environment->temporalAAEnabled();
-    if (temporalAAEnabled != layerNode.temporalAAEnabled) {
-        layerNode.temporalAAEnabled = environment->temporalAAEnabled();
-        temporalIsDirty = true;
+    // NOTE: Temporal AA is disabled when MSAA is enabled.
+    const bool temporalAARequested = environment->temporalAAEnabled();
+    const bool wasTaaEnabled = layerNode.isTemporalAAEnabled();
+    layerNode.temporalAAMode = temporalAARequested ? QSSGRenderLayer::TAAMode::On
+                                                   : QSSGRenderLayer::TAAMode::Off;
 
+    // If the state changed we need to reset the temporal AA pass index etc.
+    if (wasTaaEnabled != layerNode.isTemporalAAEnabled()) {
         layerNode.tempAAPassIndex = 0;
-        aaIsDirty = true;
+        m_aaIsDirty = true;
+        m_temporalIsDirty = true;
     }
-    layerNode.ssaaEnabled = environment->antialiasingMode()
-            == QQuick3DSceneEnvironment::QQuick3DEnvironmentAAModeValues::SSAA;
 
     layerNode.temporalAAStrength = environment->temporalAAStrength();
 
@@ -1218,13 +1259,7 @@ void QQuick3DRenderLayerHelpers::updateLayerNodeHelper(const QQuick3DViewport &v
     layerNode.lightProbeSettings.probeHorizon = qMin(environment->probeHorizon() - 1.0f, -0.001f);
     layerNode.setProbeOrientation(environment->probeOrientation());
 
-    layerNode.explicitCameras.clear();
-    if (!view3D.m_multiViewCameras.isEmpty()) {
-        for (QQuick3DCamera *camera : std::as_const(view3D.m_multiViewCameras))
-            layerNode.explicitCameras.append(static_cast<QSSGRenderCamera *>(QQuick3DObjectPrivate::get(camera)->spatialNode));
-    } else if (view3D.camera()) {
-        layerNode.explicitCameras.append(static_cast<QSSGRenderCamera *>(QQuick3DObjectPrivate::get(view3D.camera())->spatialNode));
-    }
+    QQuick3DViewport::updateCameraForLayer(view3D, layerNode);
 
     layerNode.layerFlags.setFlag(QSSGRenderLayer::LayerFlag::EnableDepthTest, environment->depthTestEnabled());
     layerNode.layerFlags.setFlag(QSSGRenderLayer::LayerFlag::EnableDepthPrePass, environment->depthPrePassEnabled());
@@ -1277,57 +1312,52 @@ void QQuick3DRenderLayerHelpers::updateLayerNodeHelper(const QQuick3DViewport &v
     } else {
         layerNode.fog.enabled = false;
     }
-}
 
-void QQuick3DSceneRenderer::updateLayerNode(QQuick3DViewport *view3D, const QList<QSSGRenderGraphObject *> &resourceLoaders)
-{
-    QSSGRenderLayer *layerNode = m_layer;
-
-    bool temporalIsDirty = false;
-    QQuick3DRenderLayerHelpers::updateLayerNodeHelper(*view3D, *m_layer, m_aaIsDirty, temporalIsDirty, m_ssaaMultiplier);
-
-    int extraFramesToRender = 0;
-
-    if (layerNode->antialiasingMode == QSSGRenderLayer::AAMode::ProgressiveAA) {
-        // with progressive AA, we need a number of extra frames after the last dirty one
-        // if we always reset requestedFramesCount when dirty, we will get the extra frames eventually
-        // +1 since we need a normal frame to start with, and we're not copying that from the screen
-        extraFramesToRender = int(layerNode->antialiasingQuality) + 1;
-    } else if (layerNode->temporalAAEnabled) {
-        // When temporalAA is on and antialiasing mode changes,
-        // layer needs to be re-rendered (at least) MAX_TEMPORAL_AA_LEVELS times
-        // to generate temporal antialiasing.
-        // Also, we need to do an extra render when animation stops
-        extraFramesToRender = (m_aaIsDirty || temporalIsDirty) ? QSSGLayerRenderData::MAX_TEMPORAL_AA_LEVELS : 1;
-    }
-
-    requestedFramesCount = extraFramesToRender;
     // Effects need to be rendered in reverse order as described in the file.
-    layerNode->firstEffect = nullptr; // We reset the linked list
-    const auto &effects = view3D->environment()->effectList();
+    // NOTE: We only build up the list here, don't do anything that depends
+    //       on the collected layer state yet. See sync() for that.
+    layerNode.firstEffect = nullptr; // We reset the linked list
     auto rit = effects.crbegin();
     const auto rend = effects.crend();
     for (; rit != rend; ++rit) {
         QQuick3DObjectPrivate *p = QQuick3DObjectPrivate::get(*rit);
         QSSGRenderEffect *effectNode = static_cast<QSSGRenderEffect *>(p->spatialNode);
         if (effectNode) {
-            if (layerNode->hasEffect(effectNode)) {
+            if (layerNode.hasEffect(effectNode)) {
                 qWarning() << "Duplicate effect found, skipping!";
             } else {
                 effectNode->className = (*rit)->metaObject()->className(); //### persistent, but still icky to store a const char* returned from a function
-                layerNode->addEffect(*effectNode);
+                layerNode.addEffect(*effectNode);
             }
         }
     }
 
-    // Now that we have the effect list used for rendering, finalize the shader
-    // code based on the layer (scene.env.) settings.
-    for (QSSGRenderEffect *effectNode = layerNode->firstEffect; effectNode; effectNode = effectNode->m_nextEffect)
-        effectNode->finalizeShaders(*layerNode, m_sgContext.get());
+    const bool hasEffects = (layerNode.firstEffect != nullptr);
+
+    const auto renderMode = view3D.renderMode();
+
+    const bool progressiveAA = layerNode.isProgressiveAAEnabled();
+    const bool temporalAA = layerNode.isTemporalAAEnabled();
+    const bool superSamplingAA = layerNode.isSsaaEnabled();
+    m_timeBasedAA = progressiveAA || temporalAA;
+    m_postProcessingStack = hasEffects || m_timeBasedAA  || superSamplingAA;
+    m_useFBO = renderMode == QQuick3DViewport::RenderMode::Offscreen ||
+            ((renderMode == QQuick3DViewport::RenderMode::Underlay || renderMode == QQuick3DViewport::RenderMode::Overlay)
+             && m_postProcessingStack);
+
+    // Update the view count
+
+    // NOTE: If we're rendering to an FBO, the view count is more than 1, and the View3D is not an XR view instance,
+    // we need to force the view count to 1 (The only time this should be the case is when embedding View3D(s)
+    // in XR with multiview enabled).
+    // Also, note that embedding View3D(s) in XR with multiview enabled only works if those View3D(s) are
+    // being rendered through a FBO.
+    if (m_useFBO && (layerNode.viewCount > 1) && !view3D.isXrViewInstance())
+        layerNode.viewCount = 1;
 
     // ResourceLoaders
-    layerNode->resourceLoaders.clear();
-    layerNode->resourceLoaders = resourceLoaders;
+    layerNode.resourceLoaders.clear();
+    layerNode.resourceLoaders = resourceLoaders;
 }
 
 void QQuick3DSceneRenderer::removeNodeFromLayer(QSSGRenderNode *node)
@@ -1559,9 +1589,9 @@ void QQuick3DSGDirectRenderer::prepare()
                 queryMainRenderPassDescriptorAndCommandBuffer(m_window, m_renderer->m_sgContext->rhiContext().get());
                 const auto &quadRenderer = m_renderer->m_sgContext->renderer()->rhiQuadRenderer();
                 quadRenderer->prepareQuad(m_renderer->m_sgContext->rhiContext().get(), nullptr);
-                if (m_renderer->requestedFramesCount > 0) {
+                if (m_renderer->m_requestedFramesCount > 0) {
                     requestRender();
-                    m_renderer->requestedFramesCount--;
+                    m_renderer->m_requestedFramesCount--;
                 }
             }
         }
@@ -1622,7 +1652,7 @@ void QQuick3DSGDirectRenderer::render()
                 QRect vp = convertQtRectToGLViewport(m_viewport, m_window->size() * m_window->effectiveDevicePixelRatio());
 
                 const auto &shaderCache = m_renderer->m_sgContext->shaderCache();
-                const auto &shaderPipeline = shaderCache->getBuiltInRhiShaders().getRhiSimpleQuadShader(rhiCtx->mainPassViewCount());
+                const auto &shaderPipeline = shaderCache->getBuiltInRhiShaders().getRhiSimpleQuadShader(m_renderer->m_layer->viewCount);
 
                 QRhiSampler *sampler = rhiCtx->sampler({ QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
                                                          QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge });
@@ -1634,7 +1664,7 @@ void QQuick3DSGDirectRenderer::render()
                 QSSGRhiGraphicsPipelineState ps;
                 ps.viewport = QRhiViewport(float(vp.x()), float(vp.y()), float(vp.width()), float(vp.height()));
                 ps.samples = rhiCtx->mainPassSampleCount();
-                ps.viewCount = rhiCtx->mainPassViewCount();
+                ps.viewCount = m_renderer->m_layer->viewCount;
                 QSSGRhiGraphicsPipelineStatePrivate::setShaderPipeline(ps, shaderPipeline.get());
                 renderer->rhiQuadRenderer()->recordRenderQuad(rhiCtx, &ps, srb, rhiCtx->mainRenderPassDescriptor(), QSSGRhiQuadRenderer::UvCoords | QSSGRhiQuadRenderer::PremulBlend);
                 cb->debugMarkEnd();
@@ -1655,7 +1685,7 @@ void QQuick3DSGDirectRenderer::render()
             m_renderer->endFrame();
 
             if (m_renderer->renderStats())
-                m_renderer->renderStats()->endRender(dumpRenderTimes);
+                m_renderer->renderStats()->endRender(dumpRenderTimes());
         }
     }
 }

@@ -524,7 +524,8 @@ void QQuickGraphsSurface::handleArrayReset()
         m_changedSeriesList.append(series);
 
     // Clear selection unless still valid
-    setSelectedPoint(m_selectedPoint, m_selectedSeries, false);
+    if (m_selectedPoint != invalidSelectionPosition())
+        setSelectedPoint(m_selectedPoint, m_selectedSeries, false);
     series->d_func()->markItemLabelDirty();
     emitNeedRender();
 }
@@ -938,6 +939,8 @@ void QQuickGraphsSurface::removeSeries(QSurface3DSeries *series)
 void QQuickGraphsSurface::clearSelection()
 {
     setSelectedPoint(invalidSelectionPosition(), 0, false);
+    for (auto model : m_model)
+        model->picked = false;
 }
 
 void QQuickGraphsSurface::handleAxisXChanged(QAbstract3DAxis *axis)
@@ -1432,18 +1435,22 @@ void QQuickGraphsSurface::updateModel(SurfaceModel *model)
                 vertex.uv = QVector2D(j * uvX, i * uvY);
                 vertex.coord = QPoint(j, i);
                 model->vertices.push_back(vertex);
-                if (boundsMin.isNull())
-                    boundsMin = pos;
-                else
-                    boundsMin = QVector3D(qMin(boundsMin.x(), pos.x()),
-                                          qMin(boundsMin.y(), pos.y()),
-                                          qMin(boundsMin.z(), pos.z()));
-                if (boundsMax.isNull())
+                if (!qIsNaN(pos.y()) && !qIsInf(pos.y())) {
+                    if (boundsMin.isNull()) {
+                        boundsMin = pos;
+                    } else {
+                        boundsMin = QVector3D(qMin(boundsMin.x(), pos.x()),
+                                              qMin(boundsMin.y(), pos.y()),
+                                              qMin(boundsMin.z(), pos.z()));
+                    }
+                }
+                if (boundsMax.isNull()) {
                     boundsMax = pos;
-                else
+                } else {
                     boundsMax = QVector3D(qMax(boundsMax.x(), pos.x()),
                                           qMax(boundsMax.y(), pos.y()),
                                           qMax(boundsMax.z(), pos.z()));
+                }
             }
         }
         model->boundsMin = boundsMin;
@@ -1563,10 +1570,11 @@ void QQuickGraphsSurface::updateProxyModel(SurfaceModel *model)
             vertex.uv = QVector2D(j * uvX, i * uvY);
             vertex.coord = QPoint(i, j);
             proxyVerts.push_back(vertex);
-
-            boundsMin = QVector3D(qMin(boundsMin.x(), pos.x()),
-                                  qMin(boundsMin.y(), pos.y()),
-                                  qMin(boundsMin.z(), pos.z()));
+            if (!qIsNaN(pos.y()) && !qIsInf(pos.y())) {
+                boundsMin = QVector3D(qMin(boundsMin.x(), pos.x()),
+                                      qMin(boundsMin.y(), pos.y()),
+                                      qMin(boundsMin.z(), pos.z()));
+            }
             boundsMax = QVector3D(qMax(boundsMax.x(), pos.x()),
                                   qMax(boundsMax.y(), pos.y()),
                                   qMax(boundsMax.z(), pos.z()));
@@ -2067,10 +2075,18 @@ bool QQuickGraphsSurface::doPicking(QPointF position)
         if (!pickResult.isEmpty()) {
             for (auto picked : pickResult) {
                 bool inBounds = qAbs(picked.position().y()) < scaleWithBackground().y();
-                if (inBounds && picked.objectHit()
-                    && picked.objectHit()->objectName().contains(QStringLiteral("ProxyModel"))) {
+                if (inBounds && picked.objectHit()) {
                     pickedPos = picked.position();
-                    pickedModel = qobject_cast<QQuick3DModel *>(picked.objectHit()->parentItem());
+                    if (picked.objectHit()->objectName().contains(QStringLiteral("ProxyModel"))) {
+                        pickedModel = qobject_cast<QQuick3DModel *>(
+                            picked.objectHit()->parentItem());
+                    } else if (picked.objectHit()->objectName().contains(
+                                   QStringLiteral("SurfaceModel"))) {
+                        pickedModel = qobject_cast<QQuick3DModel *>(picked.objectHit());
+                    } else {
+                        clearSelection();
+                        continue;
+                    }
                     bool visible = false;
                     for (auto model : m_model) {
                         if (model->model == pickedModel)
@@ -2080,8 +2096,6 @@ bool QQuickGraphsSurface::doPicking(QPointF position)
                         break;
                 } else {
                     clearSelection();
-                    for (auto model : m_model)
-                        model->picked = false;
                 }
             }
 
@@ -2187,6 +2201,8 @@ void QQuickGraphsSurface::updateSelectedPoint()
 
                 updateItemLabel(labelPosition);
                 itemLabel()->setProperty("labelText", label);
+                if (!label.compare(hiddenLabelTag))
+                    itemLabel()->setVisible(false);
                 labelVisible = model->series->isItemLabelVisible();
                 if (sliceView() && sliceView()->isVisible())
                     updateSliceItemLabel(label, slicePosition);
@@ -2276,6 +2292,7 @@ void QQuickGraphsSurface::addModel(QSurface3DSeries *series)
                                0,
                                QQuick3DGeometry::Attribute::U32Type);
     gridModel->setGeometry(gridGeometry);
+    gridModel->setCastsShadows(false);
     QQmlListReference gridMaterialRef(gridModel, "materials");
     auto gridMaterial = createQmlCustomMaterial(QStringLiteral(":/materials/GridSurfaceMaterial"));
     gridMaterial->setParent(gridModel);
@@ -2337,6 +2354,8 @@ void QQuickGraphsSurface::updateSliceItemLabel(const QString &label, QVector3D p
     labelPosition.setY(position.y() + .05f);
     sliceItemLabel()->setPosition(labelPosition);
     sliceItemLabel()->setProperty("labelText", label);
+    if (!label.compare(hiddenLabelTag))
+        sliceItemLabel()->setVisible(false);
 }
 
 void QQuickGraphsSurface::updateSelectionMode(QtGraphs3D::SelectionFlags mode)

@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QABSTRACT3DSERIES_H
-#define QABSTRACT3DSERIES_H
+#ifndef QTGRAPHS_QABSTRACT3DSERIES_H
+#define QTGRAPHS_QABSTRACT3DSERIES_H
 
 #include <QtCore/qobject.h>
 #include <QtCore/qscopedpointer.h>

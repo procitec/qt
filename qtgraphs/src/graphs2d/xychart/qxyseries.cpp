@@ -108,7 +108,6 @@ void QXYSeries::append(qreal x, qreal y)
 void QXYSeries::append(QPointF point)
 {
     Q_D(QXYSeries);
-
     if (isValidValue(point)) {
         if (d->m_graphTransition && d->m_graphTransition->initialized()
             && d->m_graphTransition->contains(QGraphAnimation::GraphAnimationType::GraphPoint)) {
@@ -323,6 +322,11 @@ void QXYSeries::removeMultiple(qsizetype index, qsizetype count)
         return;
 
     if (count > 0) {
+        if (d->m_graphTransition && d->m_graphTransition->initialized()
+            && d->m_graphTransition->contains(QGraphAnimation::GraphAnimationType::GraphPoint)) {
+            d->m_graphTransition->stop();
+        }
+
         d->m_points.remove(index, count);
 
         bool callSignal = false;
@@ -725,13 +729,11 @@ QColor QXYSeries::color() const
 
 /*!
     \property QXYSeries::selectedColor
-    \brief The main color of the selected series. For QLineSeries this means the line color and
-    for QScatterSeries the color of the point.
+    \brief The color of selected points.
 */
 /*!
     \qmlproperty color XYSeries::selectedColor
-    The main color of the selected series. For LineSeries this means the line color and
-    for ScatterSeries the color of the point
+    The color of selected points.
 */
 void QXYSeries::setSelectedColor(QColor color)
 {
@@ -919,6 +921,29 @@ void QXYSeriesPrivate::setPointSelected(qsizetype index, bool selected, bool &ca
 bool QXYSeriesPrivate::isPointSelected(qsizetype index) const
 {
     return m_selectedPoints.contains(index);
+}
+
+void QXYSeriesPrivate::append(const QList<QPointF> &points)
+{
+    bool anim = m_graphTransition && m_graphTransition->initialized()
+                && m_graphTransition->contains(QGraphAnimation::GraphAnimationType::GraphPoint);
+
+    if (anim) {
+        m_graphTransition->stop();
+        qsizetype index = m_points.size();
+
+        for (auto point : points) {
+            if (isValidValue(point)) {
+                m_graphTransition->stop();
+                m_graphTransition->onPointChanged(QGraphTransition::TransitionType::PointAdded,
+                                                  index,
+                                                  point);
+                index++;
+            }
+        }
+    } else {
+        m_points.append(points);
+    }
 }
 
 QT_END_NAMESPACE

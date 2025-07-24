@@ -1554,7 +1554,8 @@ bool QConfFileSettingsPrivate::readIniLine(QByteArrayView data, qsizetype &dataP
                                            qsizetype &lineStart, qsizetype &lineLen,
                                            qsizetype &equalsPos)
 {
-    using namespace SettingsImpl;
+    constexpr auto Space = SettingsImpl::Space;
+    constexpr auto Special = SettingsImpl::Special;
     qsizetype dataLen = data.size();
     bool inQuotes = false;
 
@@ -2472,11 +2473,11 @@ void QConfFileSettingsPrivate::ensureSectionParsed(QConfFile *confFile,
         "%General" section, \e not in the "General" section.
 
     \li In line with most implementations today, QSettings will assume that
-        \e values in the INI file are utf-8 encoded. This means that \e values
-        will be decoded as utf-8 encoded entries and written back as utf-8.
+        \e values in the INI file are UTF-8 encoded. This means that \e values
+        will be decoded as UTF-8 encoded entries and written back as UTF-8.
         To retain backward compatibility with older Qt versions, \e keys in the
         INI file are written in %-encoded format, but can be read in both
-        %-encoded and utf-8 formats.
+        %-encoded and UTF-8 formats.
 
     \endlist
 
@@ -2487,7 +2488,7 @@ void QConfFileSettingsPrivate::ensureSectionParsed(QConfFile *confFile,
     however fully readable by a Qt 6 based application (unless a ini codec
     different from utf8 had been set). But INI files written with Qt 6
     will only be readable by older Qt versions if you set the "iniCodec" to
-    a utf-8 textcodec.
+    a UTF-8 textcodec.
 
     \sa registerFormat(), setPath()
 */
@@ -3490,7 +3491,7 @@ void QSettings::setPath(Format format, Scope scope, const QString &path)
     The \a readFunc and \a writeFunc parameters are pointers to
     functions that read and write a set of key/value pairs. The
     QIODevice parameter to the read and write functions is always
-    opened in binary mode (i.e., without the QIODevice::Text flag).
+    opened in binary mode (i.e., without the \l QIODeviceBase::Text flag).
 
     The \a caseSensitivity parameter specifies whether keys are case
     sensitive or not. This makes a difference when looking up values

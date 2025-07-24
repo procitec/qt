@@ -48,6 +48,7 @@ struct Options
     QStringList amStarttestArgs;
     QString apkPath;
     QString ndkStackPath;
+    QList<QStringList> preTestRunAdbCommands;
     bool showLogcatOutput = false;
     std::optional<QProcess> stdoutLogger;
 };
@@ -168,6 +169,12 @@ static bool parseOptions()
             g_options.helpRequested = true;
         } else if (argument.compare("--verbose"_L1, Qt::CaseInsensitive) == 0) {
             g_options.verbose = true;
+        } else if (argument.compare("--pre-test-adb-command"_L1, Qt::CaseInsensitive) == 0) {
+            if (i + 1 == arguments.size())
+                g_options.helpRequested = true;
+            else {
+                g_options.preTestRunAdbCommands += QProcess::splitCommand(arguments.at(++i));
+            }
         } else if (argument.compare("--"_L1, Qt::CaseInsensitive) == 0) {
             ++i;
             break;
@@ -175,6 +182,14 @@ static bool parseOptions()
             g_options.testArgsList << arguments.at(i);
         }
     }
+
+    if (!g_options.skipAddInstallRoot) {
+        // we need to run make INSTALL_ROOT=path install to install the application file(s) first
+        g_options.makeCommand = "%1 INSTALL_ROOT=%2 install"_L1
+            .arg(g_options.makeCommand)
+            .arg(QDir::toNativeSeparators(g_options.buildPath));
+    }
+
     for (;i < arguments.size(); ++i)
         g_options.testArgsList << arguments.at(i);
 
@@ -234,6 +249,9 @@ static void printHelp()
                     "    -- Arguments that will be passed to the test application.\n"
                     "\n"
                     "    --verbose: Prints out information during processing.\n"
+                    "\n"
+                    "    --pre-test-adb-command <command>: call the adb <command> after\n"
+                    "       installation and before the test run.\n"
                     "\n"
                     "    --help: Displays this information.\n",
                     qPrintable(QCoreApplication::arguments().at(0))
@@ -811,17 +829,10 @@ int main(int argc, char *argv[])
                        "to generate the apk.";
         return EXIT_ERROR;
     }
+
     if (!execCommand(g_options.makeCommand, nullptr, true)) {
-        if (!g_options.skipAddInstallRoot) {
-            // we need to run make INSTALL_ROOT=path install to install the application file(s) first
-            if (!execCommand("%1 INSTALL_ROOT=%2 install"_L1.arg(g_options.makeCommand,
-                                        QDir::toNativeSeparators(g_options.buildPath)), nullptr)) {
-                return EXIT_ERROR;
-            }
-        } else {
-            if (!execCommand(g_options.makeCommand, nullptr))
-                return EXIT_ERROR;
-        }
+        qCritical("The build command \"%s\" failed", qPrintable(g_options.makeCommand));
+        return EXIT_ERROR;
     }
 
     if (!QFile::exists(g_options.apkPath)) {
@@ -861,6 +872,16 @@ int main(int argc, char *argv[])
     g_testInfo.isPackageInstalled.store(execAdbCommand(installArgs, nullptr));
     if (!g_testInfo.isPackageInstalled)
         return EXIT_ERROR;
+
+    // Call additional adb command if set after installation and before starting the test
+    for (const auto &command : g_options.preTestRunAdbCommands) {
+        QByteArray output;
+        if (!execAdbCommand(command, &output)) {
+            qCritical("The pre test ADB command \"%s\" failed with output:\n%s",
+                  qUtf8Printable(command.join(u' ')), output.constData());
+            return EXIT_ERROR;
+        }
+    }
 
     // Pre test start
     const QString formattedStartTime = getCurrentTimeString();

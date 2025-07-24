@@ -184,7 +184,7 @@ QT_BEGIN_NAMESPACE
  */
 
 /*!
-* \qmlproperty SurfaceDataArray Surface3DSeries::dataArray
+ * \qmlproperty SurfaceDataArray Surface3DSeries::dataArray
  *
  * Holds the reference of the data array.
  *
@@ -642,7 +642,7 @@ void QSurface3DSeriesPrivate::createItemLabel()
     static const QString seriesNameTag(QStringLiteral("@seriesName"));
 
     if (m_selectedPoint == QSurface3DSeries::invalidSelectionPosition()) {
-        m_itemLabel = QString();
+        m_itemLabel = hiddenLabelTag;
         return;
     }
 

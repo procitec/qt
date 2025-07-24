@@ -45,7 +45,7 @@ public:
 */
 
 /*!
- * \qmlproperty QVector3D levelOfDetailBoundingSphere::center
+ * \qmlproperty vector3d levelOfDetailBoundingSphere::center
  *
  * Specifies the center of the bounding sphere
  */
@@ -57,7 +57,7 @@ public:
  */
 
 /*!
- * \qmlproperty qreal levelOfDetailBoundingSphere::radius
+ * \qmlproperty real levelOfDetailBoundingSphere::radius
  *
  * Specifies the radius of the bounding sphere
  */

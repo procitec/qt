@@ -990,6 +990,7 @@ void QD3D12CommandBuffer::visitStorageImage(QD3D12Stage s,
     } else if (is3D) {
         uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
         uavDesc.Texture3D.MipSlice = UINT(d.level);
+        uavDesc.Texture3D.WSize = UINT(-1);
     } else {
         uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
         uavDesc.Texture2D.MipSlice = UINT(d.level);
@@ -3633,7 +3634,7 @@ void QRhiD3D12::finishActiveReadbacks(bool forced)
             if (readback.result->completed)
                 completedCallbacks.append(readback.result->completed);
 
-            activeReadbacks.removeLast();
+            activeReadbacks.remove(i);
         }
     }
 
@@ -5668,7 +5669,16 @@ bool QD3D12GraphicsPipeline::create()
     }
 
     QD3D12RenderPassDescriptor *rpD = QRHI_RES(QD3D12RenderPassDescriptor, m_renderPassDesc);
-    const DXGI_SAMPLE_DESC sampleDesc = rhiD->effectiveSampleDesc(m_sampleCount, DXGI_FORMAT(rpD->colorFormat[0]));
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+    if (rpD->colorAttachmentCount > 0) {
+        format = DXGI_FORMAT(rpD->colorFormat[0]);
+    } else if (rpD->hasDepthStencil) {
+        format = DXGI_FORMAT(rpD->dsFormat);
+    } else {
+        qWarning("Cannot create graphics pipeline state without color or depthStencil format");
+        return false;
+    }
+    const DXGI_SAMPLE_DESC sampleDesc = rhiD->effectiveSampleDesc(m_sampleCount, format);
 
     struct {
         QD3D12PipelineStateSubObject<ID3D12RootSignature *, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE> rootSig;

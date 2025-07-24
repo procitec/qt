@@ -207,11 +207,11 @@ GraphsView {
         }
     }
 
-        SplineSeries {
-            GraphTransition {
-                SplineControlAnimation {}
-            }
+    SplineSeries {
+        GraphTransition {
+            SplineControlAnimation {}
         }
+    }
 }
 //! [11]
 

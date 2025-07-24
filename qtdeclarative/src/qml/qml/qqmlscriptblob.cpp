@@ -32,28 +32,24 @@ QQmlRefPointer<QQmlScriptData> QQmlScriptBlob::scriptData() const
     return m_scriptData;
 }
 
-bool QQmlScriptBlob::hasScriptValue() const
-{
-    if (!m_scriptData)
-        return false;
-
-    QV4::ExecutionEngine *v4 = m_typeLoader->engine()->handle();
-    Q_ASSERT(v4);
-    QV4::Scope scope(v4);
-    QV4::ScopedValue value(scope, m_scriptData->ownScriptValue(v4));
-    return !value->isEmpty();
-}
-
 void QQmlScriptBlob::dataReceived(const SourceCodeData &data)
 {
-    if (readCacheFile()) {
-        auto unit = QQml::makeRefPointer<QV4::CompiledData::CompilationUnit>();
-        QString error;
-        if (unit->loadFromDisk(url(), data.sourceTimeStamp(), &error)) {
+    if (data.isCacheable()) {
+        if (auto unit = QQmlMetaType::obtainCompilationUnit(url())) {
             initializeFromCompilationUnit(std::move(unit));
             return;
-        } else {
-            qCDebug(DBG_DISK_CACHE()) << "Error loading" << urlString() << "from disk cache:" << error;
+        }
+
+        if (readCacheFile()) {
+            auto unit = QQml::makeRefPointer<QV4::CompiledData::CompilationUnit>();
+            QString error;
+            if (unit->loadFromDisk(url(), data.sourceTimeStamp(), &error)) {
+                initializeFromCompilationUnit(std::move(unit));
+                return;
+            } else {
+                qCDebug(DBG_DISK_CACHE()) << "Error loading" << urlString()
+                                          << "from disk cache:" << error;
+            }
         }
     }
 
@@ -84,7 +80,7 @@ void QQmlScriptBlob::dataReceived(const SourceCodeData &data)
             return;
         }
     } else {
-        QmlIR::Document irUnit(isDebugging());
+        QmlIR::Document irUnit(urlString(), finalUrlString(), isDebugging());
 
         irUnit.jsModule.sourceTimeStamp = data.sourceTimeStamp();
 
@@ -93,7 +89,7 @@ void QQmlScriptBlob::dataReceived(const SourceCodeData &data)
 
         QList<QQmlError> errors;
         irUnit.javaScriptCompilationUnit = QV4::Script::precompile(
-                     &irUnit.jsModule, &irUnit.jsParserEngine, &irUnit.jsGenerator, urlString(), finalUrlString(),
+                     &irUnit.jsModule, &irUnit.jsParserEngine, &irUnit.jsGenerator, urlString(),
                      source, &errors, QV4::Compiler::ContextType::ScriptImportedByQML);
 
         source.clear();
@@ -173,6 +169,11 @@ void QQmlScriptBlob::done()
         m_importCache->populateCache(m_scriptData->typeNameCache.data());
     }
     m_scripts.clear();
+
+    if (auto cu = m_scriptData->compilationUnit()) {
+        cu->qmlType = QQmlMetaType::findCompositeType(url(), cu, QQmlMetaType::JavaScript);
+        QQmlMetaType::registerInternalCompositeType(cu);
+    }
 }
 
 QString QQmlScriptBlob::stringAt(int index) const
@@ -223,12 +224,10 @@ void QQmlScriptBlob::initializeFromCompilationUnit(
 
     const QStringList moduleRequests = unit->moduleRequests();
     for (const QString &request: moduleRequests) {
-        const QUrl relativeRequest = QUrl(request);
-        if (m_typeLoader->injectedScript(relativeRequest))
-            continue;
-
+        const QUrl relativeRequest(request);
         const QUrl absoluteRequest = unit->finalUrl().resolved(relativeRequest);
-        QQmlRefPointer<QQmlScriptBlob> absoluteBlob = typeLoader()->getScript(absoluteRequest);
+        QQmlRefPointer<QQmlScriptBlob> absoluteBlob
+                = typeLoader()->getScript(absoluteRequest, relativeRequest);
         if (absoluteBlob->m_scriptData && absoluteBlob->m_scriptData->m_precompiledScript)
             continue;
 
@@ -237,24 +236,6 @@ void QQmlScriptBlob::initializeFromCompilationUnit(
                 absoluteBlob, /* ### */QV4::CompiledData::Location(), /*qualifier*/QString(),
                 /*namespace*/QString());
     }
-}
-
-
-/*!
-    \internal
-
-    This initializes a dummy script blob from a "native" ECMAScript module.
-    Native modules are just JavaScript values, possibly objects with members.
-
-    \sa QJSEngine::registerModule()
- */
-void QQmlScriptBlob::initializeFromNative()
-{
-    Q_ASSERT(!m_scriptData);
-    m_scriptData.adopt(new QQmlScriptData());
-    m_scriptData->url = finalUrl();
-    m_scriptData->urlString = finalUrlString();
-    m_importCache->setBaseUrl(finalUrl(), finalUrlString());
 }
 
 QT_END_NAMESPACE

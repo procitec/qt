@@ -307,8 +307,8 @@ void QmlLintSuggestions::diagnoseHelper(const QByteArray &url,
 
     qCDebug(lintLog) << "has doc, do real lint";
     QStringList imports = m_codeModel->buildPathsForFileUrl(url);
-    imports.append(m_codeModel->importPaths());
     const QString filename = doc.canonicalFilePath();
+    imports.append(m_codeModel->importPathsForFile(filename));
     // add source directory as last import as fallback in case there is no qmldir in the build
     // folder this mimics qmllint behaviors
     imports.append(QFileInfo(filename).dir().absolutePath());
@@ -368,9 +368,21 @@ void QmlLintSuggestions::diagnoseHelper(const QByteArray &url,
 
     if (const QQmlJSLogger *logger = linter.logger()) {
         qsizetype nDiagnostics = diagnostics.size();
-        for (const auto &messages : { logger->infos(), logger->warnings(), logger->errors() })
-            for (const Message &message : messages)
-                diagnostics.append(messageToDiagnostic(message));
+        for (const auto &messages : { logger->infos(), logger->warnings(), logger->errors() }) {
+            for (const Message &message : messages) {
+                if (!message.message.contains(u"Failed to import")) {
+                    diagnostics.append(messageToDiagnostic(message));
+                    continue;
+                }
+
+                Message modified {message};
+                modified.message.append(
+                        u" Did you build your project? If yes, did you set the "
+                        u"\"QT_QML_GENERATE_QMLLS_INI\" CMake variable on your project to \"ON\"?");
+
+                diagnostics.append(messageToDiagnostic(modified));
+            }
+        }
         if (diagnostics.size() != nDiagnostics && imports.size() == 1)
             diagnostics.append(createMissingBuildDirDiagnostic());
     }

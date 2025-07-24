@@ -34,6 +34,8 @@
 #include <QtNetwork/private/qhttp2connection_p.h>
 #endif
 
+#include <QtTest/private/qtesthelpers_p.h>
+
 #if QT_CONFIG(ssl)
 
 constexpr char g_privateKey[] = R"(-----BEGIN RSA PRIVATE KEY-----
@@ -415,6 +417,11 @@ void tst_QAbstractHttpServer::verifyWebSocketUpgrades()
     tcpServer.listen();
     server.bind(&tcpServer);
 #if QT_CONFIG(ssl)
+    if (QTestPrivate::isSecureTransportBlockingTest()) {
+        // We were built with SDK below 15, but a file-based keychains are not working anymore on macOS 15...
+        QSKIP("This test will block in keychain access");
+    }
+
     QSslServer sslServer;
     QSslConfiguration sslConfiguration = QSslConfiguration::defaultConfiguration();
     sslConfiguration.setLocalCertificate(QSslCertificate(QByteArray(g_certificate)));

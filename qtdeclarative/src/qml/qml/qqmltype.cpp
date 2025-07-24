@@ -56,6 +56,9 @@ QQmlTypePrivate::QQmlTypePrivate(QQmlType::RegistrationType type)
     case QQmlType::SequentialContainerType:
         new (&extraData.sequentialContainerTypeData) QMetaSequence();
         break;
+    case QQmlType::JavaScriptType:
+        new (&extraData.javaScriptTypeData) QUrl();
+        break;
     default: qFatal("QQmlTypePrivate Internal Error.");
     }
 }
@@ -88,6 +91,9 @@ QQmlTypePrivate::~QQmlTypePrivate()
         break;
     case QQmlType::SequentialContainerType:
         extraData.sequentialContainerTypeData.~QMetaSequence();
+        break;
+    case QQmlType::JavaScriptType:
+        extraData.javaScriptTypeData.~QUrl();
         break;
     default: //Also InterfaceType, because it has no extra data
         break;
@@ -152,13 +158,13 @@ QQmlType QQmlTypePrivate::resolveCompositeBaseType(QQmlEnginePrivate *engine) co
 }
 
 QQmlPropertyCache::ConstPtr QQmlTypePrivate::compositePropertyCache(
-        QQmlEnginePrivate *engine) const
+        QQmlTypeLoader *typeLoader) const
 {
     // similar logic to resolveCompositeBaseType
     Q_ASSERT(isComposite());
-    if (!engine)
+    if (!typeLoader)
         return nullptr;
-    QQmlRefPointer<QQmlTypeData> td(engine->typeLoader.getType(sourceUrl()));
+    QQmlRefPointer<QQmlTypeData> td(typeLoader->getType(sourceUrl()));
     if (td.isNull() || !td->isComplete())
         return nullptr;
     QV4::CompiledData::CompilationUnit *compilationUnit = td->compilationUnit();
@@ -252,14 +258,14 @@ const QQmlTypePrivate::ProxyMetaObjects *QQmlTypePrivate::init() const
     return finalize();
 }
 
-const QQmlTypePrivate::Enums *QQmlTypePrivate::initEnums(QQmlEnginePrivate *engine) const
+const QQmlTypePrivate::Enums *QQmlTypePrivate::initEnums(QQmlTypeLoader *typeLoader) const
 {
     if (const Enums *result = enums.loadRelaxed())
         return result;
 
     QQmlPropertyCache::ConstPtr cache;
     if (isComposite()) {
-        cache = compositePropertyCache(engine);
+        cache = compositePropertyCache(typeLoader);
         if (!cache)
             return nullptr; // Composite type not ready, yet.
     }
@@ -769,44 +775,44 @@ QUrl QQmlType::sourceUrl() const
     return d ? d->sourceUrl() : QUrl();
 }
 
-int QQmlType::enumValue(QQmlEnginePrivate *engine, const QHashedStringRef &name, bool *ok) const
+int QQmlType::enumValue(QQmlTypeLoader *typeLoader, const QHashedStringRef &name, bool *ok) const
 {
-    return QQmlTypePrivate::enumValue(d, engine, name, ok);
+    return QQmlTypePrivate::enumValue(d, typeLoader, name, ok);
 }
 
-int QQmlType::enumValue(QQmlEnginePrivate *engine, const QHashedCStringRef &name, bool *ok) const
+int QQmlType::enumValue(QQmlTypeLoader *typeLoader, const QHashedCStringRef &name, bool *ok) const
 {
-    return QQmlTypePrivate::enumValue(d, engine, name, ok);
+    return QQmlTypePrivate::enumValue(d, typeLoader, name, ok);
 }
 
-int QQmlType::enumValue(QQmlEnginePrivate *engine, const QV4::String *name, bool *ok) const
+int QQmlType::enumValue(QQmlTypeLoader *typeLoader, const QV4::String *name, bool *ok) const
 {
-    return QQmlTypePrivate::enumValue(d, engine, name, ok);
+    return QQmlTypePrivate::enumValue(d, typeLoader, name, ok);
 }
 
-int QQmlType::scopedEnumIndex(QQmlEnginePrivate *engine, const QV4::String *name, bool *ok) const
+int QQmlType::scopedEnumIndex(QQmlTypeLoader *typeLoader, const QV4::String *name, bool *ok) const
 {
-    return QQmlTypePrivate::scopedEnumIndex(d, engine, name, ok);
+    return QQmlTypePrivate::scopedEnumIndex(d, typeLoader, name, ok);
 }
 
-int QQmlType::scopedEnumIndex(QQmlEnginePrivate *engine, const QString &name, bool *ok) const
+int QQmlType::scopedEnumIndex(QQmlTypeLoader *typeLoader, const QString &name, bool *ok) const
 {
-    return QQmlTypePrivate::scopedEnumIndex(d, engine, name, ok);
+    return QQmlTypePrivate::scopedEnumIndex(d, typeLoader, name, ok);
 }
 
-int QQmlType::scopedEnumValue(QQmlEnginePrivate *engine, int index, const QV4::String *name, bool *ok) const
+int QQmlType::scopedEnumValue(QQmlTypeLoader *typeLoader, int index, const QV4::String *name, bool *ok) const
 {
-    return QQmlTypePrivate::scopedEnumValue(d, engine, index, name, ok);
+    return QQmlTypePrivate::scopedEnumValue(d, typeLoader, index, name, ok);
 }
 
-int QQmlType::scopedEnumValue(QQmlEnginePrivate *engine, int index, const QString &name, bool *ok) const
+int QQmlType::scopedEnumValue(QQmlTypeLoader *typeLoader, int index, const QString &name, bool *ok) const
 {
-    return QQmlTypePrivate::scopedEnumValue(d, engine, index, name, ok);
+    return QQmlTypePrivate::scopedEnumValue(d, typeLoader, index, name, ok);
 }
 
-int QQmlType::scopedEnumValue(QQmlEnginePrivate *engine, const QHashedStringRef &scopedEnumName, const QHashedStringRef &name, bool *ok) const
+int QQmlType::scopedEnumValue(QQmlTypeLoader *typeLoader, const QHashedStringRef &scopedEnumName, const QHashedStringRef &name, bool *ok) const
 {
-    return QQmlTypePrivate::scopedEnumValue(d, engine, scopedEnumName, name, ok);
+    return QQmlTypePrivate::scopedEnumValue(d, typeLoader, scopedEnumName, name, ok);
 }
 
 void QQmlType::refHandle(const QQmlTypePrivate *priv)

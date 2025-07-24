@@ -183,6 +183,9 @@ Item {
             compare(initialized.tickAnchor, 2)
             compare(initialized.tickInterval, 3.0)
 
+            initialized.labelFormat = "%.1f test"
+            compare(initialized.labelFormat, "%.1f test")
+
             // Common properties from AbstractAxis
             compare(initialized.gridVisible, true)
             compare(initialized.labelsAngle, 45)
@@ -199,7 +202,7 @@ Item {
             // Signals
             compare(minSpy.count, 1)
             compare(maxSpy.count, 1)
-            compare(labelFormatSpy.count, 1)
+            compare(labelFormatSpy.count, 2)
             compare(labelDecimalsSpy.count, 1)
             compare(tickSpy.count, 1)
             compare(subTickSpy.count, 1)

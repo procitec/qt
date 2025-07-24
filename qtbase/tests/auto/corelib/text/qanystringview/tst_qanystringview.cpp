@@ -1,6 +1,8 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
+#include "../qstringview/arrays_of_unknown_bounds.h"
+
 #include <QAnyStringView>
 #include <QChar>
 #include <QDebug>
@@ -83,6 +85,11 @@ static_assert(!CanConvert<ImplicitlyConvertibleTo<QLatin1StringView>>);
 static_assert(CanConvert<QChar>);
 
 static_assert(CanConvert<QChar[123]>);
+static_assert(CanConvert<const QChar[123]>);
+#ifndef Q_OS_INTEGRITY // ¯\_(ツ)_/¯
+static_assert(CanConvert<      QChar[]>);
+static_assert(CanConvert<const QChar[]>);
+#endif
 
 static_assert(CanConvert<      QString >);
 static_assert(CanConvert<const QString >);
@@ -96,6 +103,11 @@ static_assert(CanConvert<const QString&>);
 static_assert(CanConvert<ushort>);
 
 static_assert(CanConvert<ushort[123]>);
+static_assert(CanConvert<const ushort[123]>);
+#ifndef Q_OS_INTEGRITY // ¯\_(ツ)_/¯
+static_assert(CanConvert<      ushort[]>);
+static_assert(CanConvert<const ushort[]>);
+#endif
 
 static_assert(CanConvert<      ushort*>);
 static_assert(CanConvert<const ushort*>);
@@ -114,6 +126,13 @@ static_assert(!CanConvert<std::list<ushort>>);
 //
 
 static_assert(CanConvert<char8_t>);
+
+static_assert(CanConvert<      char8_t[123]>);
+static_assert(CanConvert<const char8_t[123]>);
+#ifndef Q_OS_INTEGRITY // ¯\_(ツ)_/¯
+static_assert(CanConvert<      char8_t[]>);
+static_assert(CanConvert<const char8_t[]>);
+#endif
 
 static_assert(CanConvert<      char8_t*>);
 static_assert(CanConvert<const char8_t*>);
@@ -147,6 +166,13 @@ static_assert(!CanConvert<std::list<char8_t>>);
 
 static_assert(CanConvert<char16_t>);
 
+static_assert(CanConvert<      char16_t[123]>);
+static_assert(CanConvert<const char16_t[123]>);
+#ifndef Q_OS_INTEGRITY // ¯\_(ツ)_/¯
+static_assert(CanConvert<      char16_t[]>);
+static_assert(CanConvert<const char16_t[]>);
+#endif
+
 static_assert(CanConvert<      char16_t*>);
 static_assert(CanConvert<const char16_t*>);
 
@@ -176,6 +202,13 @@ static_assert(CanConvert<QtPrivate::XmlStringRef>);
 // Qt Policy: char32_t isn't supported
 
 static_assert(CanConvert<char32_t>); // ... except here
+
+static_assert(!CanConvert<      char32_t[123]>);
+static_assert(!CanConvert<const char32_t[123]>);
+#ifndef Q_OS_INTEGRITY // ¯\_(ツ)_/¯
+static_assert(!CanConvert<      char32_t[]>);
+static_assert(!CanConvert<const char32_t[]>);
+#endif
 
 static_assert(!CanConvert<      char32_t*>);
 static_assert(!CanConvert<const char32_t*>);
@@ -210,6 +243,13 @@ constexpr bool CanConvertFromWCharT =
         ;
 
 static_assert(CanConvert<wchar_t> == CanConvertFromWCharT); // ### FIXME: should work everywhere
+
+static_assert(CanConvert<      wchar_t[123]> == CanConvertFromWCharT);
+static_assert(CanConvert<const wchar_t[123]> == CanConvertFromWCharT);
+#ifndef Q_OS_INTEGRITY // ¯\_(ツ)_/¯
+static_assert(CanConvert<      wchar_t[]>    == CanConvertFromWCharT);
+static_assert(CanConvert<const wchar_t[]>    == CanConvertFromWCharT);
+#endif
 
 static_assert(CanConvert<      wchar_t*> == CanConvertFromWCharT);
 static_assert(CanConvert<const wchar_t*> == CanConvertFromWCharT);
@@ -330,10 +370,22 @@ private Q_SLOTS:
     void fromQLatin1StringView() const { fromQStringOrByteArray<QLatin1StringView>(); }
 
     void fromCharArray() const { fromArray<char>(); }
+    void fromCharArrayOfUnknownSize() const
+    {
+        from_array_of_unknown_size<QAnyStringView>();
+        from_array_of_unknown_size<QUtf8StringView>();
+    }
     void fromChar8Array() const { ONLY_IF_CHAR_8_T(fromArray<char8_t>()); }
+    void fromChar8ArrayOfUnknownSize() const
+    {
+        ONLY_IF_CHAR_8_T(from_u8array_of_unknown_size<QAnyStringView>());
+        ONLY_IF_CHAR_8_T(from_u8array_of_unknown_size<QUtf8StringView>());
+    }
     void fromChar16Array() const { fromArray<char16_t>(); }
+    void fromChar16ArrayOfUnknownSize() const { from_u16array_of_unknown_size<QAnyStringView>(); }
     void fromQCharArray() const { fromArray<QChar>(); }
     void fromWCharTArray() const { ONLY_WIN(fromArray<wchar_t>()); }
+    void fromWCharTArrayOfUnknownSize() const { ONLY_WIN(from_warray_of_unknown_size<QAnyStringView>()); }
 
     void fromQCharStar() const
     {
@@ -358,17 +410,17 @@ private Q_SLOTS:
     void fromChar16T() const { fromCharacter(u'ä', 1); }
     void fromUShort() const { fromCharacter(ushort(0xE4), 1); }
     void fromChar32T() const {
-        fromCharacter(U'ä', 1);
-        fromCharacter(U'\x1F0A0', 2); // U+1F0A0: PLAYING CARD BACK
+        fromCharacter(U'ä', 1, true);
+        fromCharacter(U'\x1F0A0', 2, true); // U+1F0A0: PLAYING CARD BACK
     }
     void fromWCharT() const {
         ONLY_WIN(fromCharacter(L'ä', 1)); // should work on Unix, too (char32_t does)
     }
     void fromQChar() const { fromCharacter(QChar(u'ä'), 1); }
-    void fromQLatin1Char() const { fromCharacter(QLatin1Char('\xE4'), 1); }
+    void fromQLatin1Char() const { fromCharacter(QLatin1Char('\xE4'), 1, true); }
     void fromQCharSpecialCharacter() const {
-        fromCharacter(QChar::ReplacementCharacter, 1);
-        fromCharacter(QChar::LastValidCodePoint, 1);
+        fromCharacter(QChar::ReplacementCharacter, 1, true);
+        fromCharacter(QChar::LastValidCodePoint, 1, true);
     }
     void fromCharacterSpecial() const;
 
@@ -409,7 +461,7 @@ private:
     template <typename Char>
     void fromLiteral(const Char *arg) const;
     template <typename Char>
-    void fromCharacter(Char arg, qsizetype expectedSize) const;
+    void fromCharacter(Char arg, qsizetype expectedSize, bool expectConversion = false) const;
     template <typename Char>
     void fromRange() const;
     template <typename Char, typename Container>
@@ -689,8 +741,11 @@ void tst_QAnyStringView::fromLiteral(const Char *arg) const
     conversion_tests(arg);
 }
 
+template <typename T>
+const void *as_const_void_star(T *p) { return p; }
+
 template<typename Char>
-void tst_QAnyStringView::fromCharacter(Char arg, qsizetype expectedSize) const
+void tst_QAnyStringView::fromCharacter(Char arg, qsizetype expectedSize, bool expectConversion) const
 {
     // Need to re-create a new QASV(arg) each time, QASV(Char).data() dangles
     // after the end of the Full Expression:
@@ -699,6 +754,11 @@ void tst_QAnyStringView::fromCharacter(Char arg, qsizetype expectedSize) const
                   "If this fails, we may be creating a temporary QString/QByteArray");
 
     QCOMPARE(QAnyStringView(arg).size(), expectedSize);
+
+    if (expectConversion)
+        QCOMPARE_NE(QAnyStringView(arg).data(), as_const_void_star(std::addressof(arg)));
+    else
+        QCOMPARE_EQ(QAnyStringView(arg).data(), as_const_void_star(std::addressof(arg)));
 
     // QCOMPARE(QAnyStringView(arg), arg); // not all pairs compile, so do it manually:
 

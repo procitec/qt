@@ -210,6 +210,7 @@ void tst_bars::modifySeries()
     QCOMPARE(sets[6], set7);
     QCOMPARE(spy0.size(), 7);
     QCOMPARE(spy3.size(), 7);
+    QCOMPARE(spy7.size(), 7);
 
     // pointer remove
     m_series->remove(set3);
@@ -222,6 +223,7 @@ void tst_bars::modifySeries()
     QCOMPARE(sets[5], set7);
     QCOMPARE(spy2.size(), 1);
     QCOMPARE(spy3.size(), 8);
+    QCOMPARE(spy7.size(), 8);
 
     // index remove
     QVERIFY(!m_series->remove(-1));
@@ -235,6 +237,7 @@ void tst_bars::modifySeries()
     QCOMPARE(sets[4], set7);
     QCOMPARE(spy2.size(), 2);
     QCOMPARE(spy3.size(), 9);
+    QCOMPARE(spy7.size(), 9);
 
     // index replace
     m_series->replace(2, newSet);
@@ -245,6 +248,7 @@ void tst_bars::modifySeries()
     QCOMPARE(sets[3], set6);
     QCOMPARE(sets[4], set7);
     QCOMPARE(spy1.size(), 1);
+    QCOMPARE(spy7.size(), 10);
 
     // multiple remove
     m_series->removeMultiple(-1, -1);
@@ -257,6 +261,7 @@ void tst_bars::modifySeries()
     QCOMPARE(sets[2], set7);
     QCOMPARE(spy2.size(), 5);
     QCOMPARE(spy3.size(), 12);
+    QCOMPARE(spy7.size(), 12);
 
     // pointer replace
     QVERIFY(!m_series->replace(nullptr, nullptr));
@@ -292,6 +297,7 @@ void tst_bars::modifySeries()
     QCOMPARE(m_series->count(), 2);
     QCOMPARE(spy2.size(), 7);
     QCOMPARE(spy3.size(), 14);
+    QCOMPARE(spy7.size(), 14);
 
     // full replace
     QList<QBarSet *> bars = {new QBarSet("new set 1", m_series),
@@ -302,6 +308,7 @@ void tst_bars::modifySeries()
     QCOMPARE(sets[0], bars[0]);
     QCOMPARE(sets[1], bars[1]);
     QCOMPARE(sets[2], bars[2]);
+    QCOMPARE(spy7.size(), 16);
 
     //append value to barset
     for (qsizetype i = 0; i < m_series->barSets().size(); ++i)
@@ -322,6 +329,7 @@ void tst_bars::modifySeries()
     m_series->insert(0, insertSet);
     sets = m_series->barSets();
     QCOMPARE(sets[0], insertSet);
+    QCOMPARE(spy7.size(), 17);
 
     m_series->barSets().at(0)->append(10);
     m_series->barSets().at(0)->replace(0, 20);
@@ -334,6 +342,7 @@ void tst_bars::modifySeries()
     QCOMPARE(spy4.size(), 4);
     QCOMPARE(spy5.size(), 4);
     QCOMPARE(spy6.size(), 4);
+    QCOMPARE(spy7.size(), 17);
 }
 
 QTEST_MAIN(tst_bars)

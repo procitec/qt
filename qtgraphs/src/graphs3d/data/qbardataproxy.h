@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QBARDATAPROXY_H
-#define QBARDATAPROXY_H
+#ifndef QTGRAPHS_QBARDATAPROXY_H
+#define QTGRAPHS_QBARDATAPROXY_H
 
 #include <QtCore/qlist.h>
 #include <QtCore/qstringlist.h>

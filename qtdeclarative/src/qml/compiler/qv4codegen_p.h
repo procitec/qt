@@ -70,18 +70,12 @@ public:
             CodegenWarningInterface *iface = defaultCodegenWarningInterface(),
             bool storeSourceLocations = false);
 
-    void generateFromProgram(const QString &fileName,
-                             const QString &finalUrl,
-                             const QString &sourceCode,
-                             QQmlJS::AST::Program *ast,
-                             Module *module,
-                             ContextType contextType = ContextType::Global);
+    void generateFromProgram(
+            const QString &sourceCode, QQmlJS::AST::Program *ast, Module *module,
+            ContextType contextType = ContextType::Global);
 
-    void generateFromModule(const QString &fileName,
-                            const QString &finalUrl,
-                            const QString &sourceCode,
-                            QQmlJS::AST::ESModule *ast,
-                            Module *module);
+    void generateFromModule(const QString &sourceCode, QQmlJS::AST::ESModule *ast, Module *module);
+    void generateFromModule(const Value &value, Module *module);
 
 public:
     class VolatileMemoryLocationScanner;
@@ -737,6 +731,9 @@ public:
     static QQmlRefPointer<QV4::CompiledData::CompilationUnit> compileModule(
             bool debugMode, const QString &url, const QString &sourceCode,
             const QDateTime &sourceTimeStamp, QList<QQmlJS::DiagnosticMessage> *diagnostics);
+
+    static const QV4::CompiledData::Unit *generateNativeModuleUnitData(
+            bool debugMode, const QString &url, const QV4::Value &value);
 
     Context *currentContext() const { return _context; }
     BytecodeGenerator *generator() const { return bytecodeGenerator; }

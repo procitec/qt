@@ -44,6 +44,7 @@ else()
             input
             utils
             qml
+            ../common/utils/
     )
 
     qt_internal_extend_target(Graphs CONDITION QT_FEATURE_graphs_3d_bars3d

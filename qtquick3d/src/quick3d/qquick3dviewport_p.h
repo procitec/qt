@@ -106,7 +106,7 @@ public:
     Q_REVISION(6, 2) Q_INVOKABLE QQuick3DPickResult rayPick(const QVector3D &origin, const QVector3D &direction) const;
     Q_REVISION(6, 2) Q_INVOKABLE QList<QQuick3DPickResult> rayPickAll(const QVector3D &origin, const QVector3D &direction) const;
 
-    void processPointerEventFromRay(const QVector3D &origin, const QVector3D &direction, QPointerEvent *event);
+    void processPointerEventFromRay(const QVector3D &origin, const QVector3D &direction, QPointerEvent *event) const;
     bool singlePointPick(QSinglePointEvent *event, const QVector3D &origin, const QVector3D &direction);
 
     Q_REVISION(6, 8) Q_INVOKABLE void setTouchpoint(QQuickItem *target, const QPointF &position, int pointId, bool active);
@@ -128,6 +128,12 @@ public:
     void clearExtensionListDirty() { m_extensionListDirty = false; }
 
     Q_REVISION(6, 7) Q_INVOKABLE void rebuildExtensionList();
+
+    enum class PrivateInstanceType : quint8 { XrViewInstance = 1 };
+    explicit QQuick3DViewport(PrivateInstanceType type, QQuickItem *parent = nullptr);
+    [[nodiscard]] bool isXrViewInstance() const { return m_isXrViewInstance; }
+
+    static void updateCameraForLayer(const QQuick3DViewport &view3D, QSSGRenderLayer &layerNode);
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
@@ -215,6 +221,7 @@ private:
     QQuick3DCamera *m_camera = nullptr;
     QVarLengthArray<QQuick3DCamera *, 2> m_multiViewCameras;
     QQuick3DSceneEnvironment *m_environment = nullptr;
+    mutable QPointer<QQuick3DSceneEnvironment> m_builtInEnvironment;
     QQuick3DSceneRootNode *m_sceneRoot = nullptr;
     QQuick3DNode *m_importScene = nullptr;
     mutable SGFramebufferObjectNode *m_node = nullptr;
@@ -235,6 +242,7 @@ private:
     QQuick3DLightmapBaker *m_lightmapBaker = nullptr;
     QList<QQuick3DObject *> m_extensions;
     bool m_extensionListDirty = false;
+    bool m_isXrViewInstance = false;
 
     struct TouchState {
         QQuickItem *target = nullptr;

@@ -28,6 +28,8 @@ QGraphsTheme *AxisRenderer::theme() {
 void AxisRenderer::initialize() {
     if (m_initialized)
         return;
+    if (!window())
+        return;
 
     if (m_axisGrid)
         m_axisGrid->componentComplete();
@@ -486,15 +488,17 @@ void AxisRenderer::updateAxisTickersShadow()
 
 void AxisRenderer::updateAxisGrid()
 {
-    //if (theme()->themeDirty()) {
-        m_axisGrid->setGridColor(theme()->grid().mainColor());
-        m_axisGrid->setSubGridColor(theme()->grid().subColor());
-        m_axisGrid->setSubGridLineWidth(theme()->grid().subWidth());
-        m_axisGrid->setGridLineWidth(theme()->grid().mainWidth());
-        const double minimumSmoothing = 0.05;
-        m_axisGrid->setSmoothing(m_graph->gridSmoothing() + minimumSmoothing);
+    m_axisGrid->setGridColor(theme()->grid().mainColor());
+    m_axisGrid->setSubGridColor(theme()->grid().subColor());
+    m_axisGrid->setSubGridLineWidth(theme()->grid().subWidth());
+    m_axisGrid->setGridLineWidth(theme()->grid().mainWidth());
+    const double minimumSmoothing = 0.05;
+    m_axisGrid->setSmoothing(m_graph->gridSmoothing() + minimumSmoothing);
+    if (theme()->isPlotAreaBackgroundVisible())
         m_axisGrid->setPlotAreaBackgroundColor(theme()->plotAreaBackgroundColor());
-    //}
+    else
+        m_axisGrid->setPlotAreaBackgroundColor(QColorConstants::Transparent);
+
     float topPadding = m_axisGrid->gridLineWidth() * 0.5;
     float bottomPadding = topPadding;
     float leftPadding = topPadding;
@@ -564,7 +568,10 @@ void AxisRenderer::updateAxisTitles(const QRectF xAxisRect, const QRectF yAxisRe
         m_xAxisTitle->setX((2 * xAxisRect.x() - m_xAxisTitle->contentWidth() + xAxisRect.width())
                            * 0.5);
         m_xAxisTitle->setY(xAxisRect.y() + xAxisRect.height());
-        m_xAxisTitle->setColor(m_axisHorizontal->titleColor());
+        if (m_axisHorizontal->titleColor().isValid())
+            m_xAxisTitle->setColor(m_axisHorizontal->titleColor());
+        else
+            m_xAxisTitle->setColor(theme()->labelTextColor());
         m_xAxisTitle->setFont(m_axisHorizontal->titleFont());
         m_xAxisTitle->setVisible(true);
     } else {
@@ -573,11 +580,14 @@ void AxisRenderer::updateAxisTitles(const QRectF xAxisRect, const QRectF yAxisRe
 
     if (m_axisVertical && m_axisVertical->isTitleVisible()) {
         m_yAxisTitle->setText(m_axisVertical->titleText());
-        m_yAxisTitle->setX(0 - m_yAxisTitle->height());
+        m_yAxisTitle->setX(0 + m_yAxisTitle->height() - m_yAxisTitle->contentWidth() * 0.5);
         m_yAxisTitle->setY((2 * yAxisRect.y() - m_yAxisTitle->contentHeight() + yAxisRect.height())
                            * 0.5);
         m_yAxisTitle->setRotation(-90);
-        m_yAxisTitle->setColor(m_axisVertical->titleColor());
+        if (m_axisVertical->titleColor().isValid())
+            m_yAxisTitle->setColor(m_axisVertical->titleColor());
+        else
+            m_yAxisTitle->setColor(theme()->labelTextColor());
         m_yAxisTitle->setFont(m_axisVertical->titleFont());
         m_yAxisTitle->setVisible(true);
     } else {
@@ -741,8 +751,14 @@ void AxisRenderer::updateValueYAxisLabels(QValueAxis *axis, const QRectF rect)
             if (decimals < 0)
                 decimals = getValueDecimalsFromRange(m_axisVerticalValueRange);
             const QString f = axis->labelFormat();
-            char format = f.isEmpty() ? 'f' : f.front().toLatin1();
-            QString label = QString::number(number, format, decimals);
+            QString label;
+            if (f.length() <= 1) {
+              char format = f.isEmpty() ? 'f' : f.front().toLatin1();
+              label = QString::number(number, format, decimals);
+            } else {
+              QByteArray array = f.toLatin1();
+              label = QString::asprintf(array.constData(), number);
+            }
             if (m_verticalAxisOnRight) {
                 setLabelTextProperties(textItem, label, false,
                                        QQuickText::HAlignment::AlignLeft,
@@ -800,8 +816,14 @@ void AxisRenderer::updateValueXAxisLabels(QValueAxis *axis, const QRectF rect)
             if (decimals < 0)
                 decimals = getValueDecimalsFromRange(m_axisHorizontalValueRange);
             const QString f = axis->labelFormat();
-            char format = f.isEmpty() ? 'f' : f.front().toLatin1();
-            QString label = QString::number(number, format, decimals);
+            QString label;
+            if (f.length() <= 1) {
+              char format = f.isEmpty() ? 'f' : f.front().toLatin1();
+              label = QString::number(number, format, decimals);
+            } else {
+              QByteArray array = f.toLatin1();
+              label = QString::asprintf(array.constData(), number);
+            }
             if (m_horizontalAxisOnTop) {
                 setLabelTextProperties(textItem, label, true,
                                        QQuickText::HAlignment::AlignHCenter,

@@ -2294,7 +2294,7 @@ QTextStream &QTextStream::operator<<(signed short i)
 {
     Q_D(QTextStream);
     CHECK_VALID_STREAM(*this);
-    d->putNumber((qulonglong)qAbs(qlonglong(i)), i < 0);
+    d->putNumber(QtPrivate::qUnsignedAbs(i), i < 0);
     return *this;
 }
 
@@ -2320,7 +2320,7 @@ QTextStream &QTextStream::operator<<(signed int i)
 {
     Q_D(QTextStream);
     CHECK_VALID_STREAM(*this);
-    d->putNumber((qulonglong)qAbs(qlonglong(i)), i < 0);
+    d->putNumber(QtPrivate::qUnsignedAbs(i), i < 0);
     return *this;
 }
 
@@ -2346,7 +2346,7 @@ QTextStream &QTextStream::operator<<(signed long i)
 {
     Q_D(QTextStream);
     CHECK_VALID_STREAM(*this);
-    d->putNumber((qulonglong)qAbs(qlonglong(i)), i < 0);
+    d->putNumber(QtPrivate::qUnsignedAbs(i), i < 0);
     return *this;
 }
 
@@ -2372,7 +2372,7 @@ QTextStream &QTextStream::operator<<(qlonglong i)
 {
     Q_D(QTextStream);
     CHECK_VALID_STREAM(*this);
-    d->putNumber((qulonglong)qAbs(i), i < 0);
+    d->putNumber(QtPrivate::qUnsignedAbs(i), i < 0);
     return *this;
 }
 
@@ -2833,7 +2833,7 @@ QTextStream &center(QTextStream &stream)
     \snippet code/src_corelib_io_qtextstream.cpp 9
 
     Note: On Windows, all '\\n' characters are written as '\\r\\n' if
-    QTextStream's device or string is opened using the QIODevice::Text flag.
+    QTextStream's device or string is opened using the \l QIODeviceBase::Text flag.
 
     \since 5.14
 

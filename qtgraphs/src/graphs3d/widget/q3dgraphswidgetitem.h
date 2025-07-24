@@ -1,8 +1,8 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef Q3DGRAPHSWIDGETITEM_H
-#define Q3DGRAPHSWIDGETITEM_H
+#ifndef QTGRAPHS_Q3DGRAPHSWIDGETITEM_H
+#define QTGRAPHS_Q3DGRAPHSWIDGETITEM_H
 
 #include <QtCore/qlocale.h>
 #include <QtGraphs/q3dscene.h>

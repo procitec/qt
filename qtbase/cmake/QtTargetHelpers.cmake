@@ -231,6 +231,9 @@ function(qt_internal_extend_target target)
             )
         endif()
 
+        set(all_libraries ${arg_LIBRARIES} ${arg_PUBLIC_LIBRARIES})
+        qt_internal_work_around_autogen_discarded_dependencies(${target} ${all_libraries})
+
         if(QT_GENERATE_SBOM)
             set(sbom_args "")
             _qt_internal_forward_function_args(
@@ -452,6 +455,7 @@ macro(qt_internal_setup_default_target_function_options)
         QT_APP
         QT_TEST
         QT_MANUAL_TEST
+        QT_BENCHMARK_TEST
         NO_UNITY_BUILD
         ${__qt_internal_sbom_optional_args}
     )

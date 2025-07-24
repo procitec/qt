@@ -1,6 +1,0 @@
-if(TARGET Qt::WebEngineWidgets)
-    add_subdirectory(widgets)
-endif()
-if(TARGET Qt::WebEngineQuick)
-    add_subdirectory(quick)
-endif()

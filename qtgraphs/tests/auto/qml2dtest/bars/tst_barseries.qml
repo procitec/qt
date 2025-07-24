@@ -240,11 +240,13 @@ Item {
             initialized.append(list)
             compare(initialized.count, 7)
             compare(countSpy.count, 5)
+            compare(barSetsSpy.count, 5)
 
             // insert
             initialized.insert(3, b7)
             compare(initialized.count, 8)
             compare(countSpy.count, 6)
+            compare(barSetsSpy.count, 6)
 
             // at
             let atBar = initialized.at(5)
@@ -259,16 +261,19 @@ Item {
             initialized.remove(0)
             compare(initialized.count, 6)
             compare(countSpy.count, 8)
+            compare(barSetsSpy.count, 8)
 
             // remove multiple
             initialized.removeMultiple(0,3)
             compare(initialized.count, 3)
             compare(countSpy.count, 11)
+            compare(barSetsSpy.count, 11)
 
             // take
             verify(initialized.take(b5))
             compare(initialized.count, 2)
             compare(countSpy.count, 12)
+            compare(barSetsSpy.count, 12)
 
             //replace
             initialized.replace(b6, newb6)
@@ -277,6 +282,7 @@ Item {
             compare(initialized.at(1), newb6)
             initialized.replace(newlist)
             compare(initialized.barSets, newlist)
+            compare(barSetsSpy.count, 16)
         }
     }
 

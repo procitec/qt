@@ -46,6 +46,36 @@ Item {
 
     Surface3DSeries {
         dataProxy: ItemModelSurfaceDataProxy {
+            id: rowcolumnreplace
+
+            autoColumnCategories: true
+            autoRowCategories: true
+            itemModel: ListModel {
+                ListElement{ rowcol: "1st,AA"; data: "0/1/2"; }
+                ListElement{ rowcol: "2nd,BB"; data: "1/2/3"; }
+                ListElement{ rowcol: "3rd,CC"; data: "2/3/4"; }
+                ListElement{ rowcol: "4th,DD"; data: "3/4/5"; }
+            }
+            columnRole: "rowcol"
+            columnRolePattern: /(\d),(\d)/
+            columnRoleReplace: "\\2"
+            rowRole: "rowcol"
+            rowRolePattern: /(\d),(\d)/
+            rowRoleReplace: "\\1"
+            xPosRole: "data"
+            xPosRolePattern: /^([^\/]*)\/([^\/]*)\/(.*)$/
+            xPosRoleReplace: "\\1"
+            yPosRole: "data"
+            yPosRolePattern: /^([^\/]*)\/([^\/]*)\/(.*)$/
+            yPosRoleReplace: "\\2"
+            zPosRole: "data"
+            zPosRolePattern: /^([^\/]*)\/([^\/]*)\/(.*)$/
+            zPosRoleReplace: "\\3"
+        }
+    }
+
+    Surface3DSeries {
+        dataProxy: ItemModelSurfaceDataProxy {
             id: change
         }
     }
@@ -89,6 +119,7 @@ Item {
         name: "ItemModelSurfaceDataProxy Initialized"
 
         function test_initialized() {
+            verify(initialized.series)
             compare(initialized.autoColumnCategories, false)
             compare(initialized.autoRowCategories, false)
             compare(initialized.columnCategories.length, 2)
@@ -117,6 +148,33 @@ Item {
 
             compare(initialized.columnCount, 2)
             compare(initialized.rowCount, 2)
+        }
+    }
+
+    TestCase {
+        name: "ItemModelSurfaceDataProxy RoleReplace"
+
+        function test_initialized() {
+            verify(rowcolumnreplace.series)
+            compare(rowcolumnreplace.columnCategories.length, 4)
+            // TODO: These fail, see QTBUG-132351
+            // compare(rowcolumnreplace.columnCategories[0], "AA")
+            // compare(rowcolumnreplace.columnCategories[1], "BB")
+            // compare(rowcolumnreplace.columnCategories[2], "CC")
+            // compare(rowcolumnreplace.columnCategories[3], "DD")
+            compare(rowcolumnreplace.rowCategories.length, 4)
+            // TODO: These fail, see QTBUG-132351
+            // compare(rowcolumnreplace.rowCategories[0], "1st")
+            // compare(rowcolumnreplace.rowCategories[1], "2nd")
+            // compare(rowcolumnreplace.rowCategories[2], "3rd")
+            // compare(rowcolumnreplace.rowCategories[3], "4th")
+            // TODO: Do we have a way to check what the x, y, and z values are after the replace (in QML)?
+            compare(rowcolumnreplace.xPosRole, "data")
+            compare(rowcolumnreplace.xPosRoleReplace, "\\1")
+            compare(rowcolumnreplace.yPosRole, "data")
+            compare(rowcolumnreplace.yPosRoleReplace, "\\2")
+            compare(rowcolumnreplace.zPosRole, "data")
+            compare(rowcolumnreplace.zPosRoleReplace, "\\3")
         }
     }
 
@@ -228,7 +286,7 @@ Item {
                     rowRole: "coords"
                     columnRole: "coords"
                     yPosRole: "data"
-                    rowRolePattern: /(\d),\d/
+                    rowRolePattern: /(\d),(\d)/
                     columnRolePattern: /(\d),(\d)/
                     rowRoleReplace: "\\1"
                     columnRoleReplace: "\\2"

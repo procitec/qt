@@ -508,8 +508,7 @@ void QWidgetWindow::handleNonClientAreaMouseEvent(QMouseEvent *e)
 
 void QWidgetWindow::handleMouseEvent(QMouseEvent *event)
 {
-    if (QApplicationPrivate::inPopupMode()) {
-        QPointer<QWidget> activePopupWidget = QApplication::activePopupWidget();
+    if (auto *activePopupWidget = QApplication::activePopupWidget()) {
         QPointF mapped = event->position();
         if (activePopupWidget != m_widget)
             mapped = activePopupWidget->mapFromGlobal(event->globalPosition());
@@ -564,7 +563,7 @@ void QWidgetWindow::handleMouseEvent(QMouseEvent *event)
                 }
             }
 
-            if ((event->type() != QEvent::MouseButtonPress) || !(QMutableSinglePointEvent::from(event)->isDoubleClick())) {
+            if ((event->type() != QEvent::MouseButtonPress) || !(QMutableSinglePointEvent::isDoubleClick(event))) {
                 // if the widget that was pressed is gone, then deliver move events without buttons
                 const auto buttons = event->type() == QEvent::MouseMove && qt_popup_down_closed
                                    ? Qt::NoButton : event->buttons();
@@ -656,7 +655,7 @@ void QWidgetWindow::handleMouseEvent(QMouseEvent *event)
         mapped = event->position().toPoint();
     }
 
-    if ((event->type() != QEvent::MouseButtonPress) || !QMutableSinglePointEvent::from(event)->isDoubleClick()) {
+    if ((event->type() != QEvent::MouseButtonPress) || !QMutableSinglePointEvent::isDoubleClick(event)) {
 
         // The preceding statement excludes MouseButtonPress events which caused
         // creation of a MouseButtonDblClick event. QTBUG-25831
@@ -685,7 +684,7 @@ void QWidgetWindow::handleTouchEvent(QTouchEvent *event)
     if (event->type() == QEvent::TouchCancel) {
         QApplicationPrivate::translateTouchCancel(event->pointingDevice(), event->timestamp());
         event->accept();
-    } else if (QApplicationPrivate::inPopupMode()) {
+    } else if (QApplication::activePopupWidget()) {
         // Ignore touch events for popups. This will cause QGuiApplication to synthesise mouse
         // events instead, which QWidgetWindow::handleMouseEvent will forward correctly:
         event->ignore();
@@ -700,8 +699,7 @@ void QWidgetWindow::handleKeyEvent(QKeyEvent *event)
         return;
 
     QObject *receiver = QWidget::keyboardGrabber();
-    if (!receiver && QApplicationPrivate::inPopupMode()) {
-        QWidget *popup = QApplication::activePopupWidget();
+    if (auto *popup = QApplication::activePopupWidget(); !receiver && popup) {
         QWidget *popupFocusWidget = popup->focusWidget();
         receiver = popupFocusWidget ? popupFocusWidget : popup;
     }
@@ -1031,6 +1029,13 @@ void QWidgetWindow::handleExposeEvent(QExposeEvent *event)
     QWidgetPrivate *wPriv = m_widget->d_func();
     const bool exposed = isExposed();
 
+    // We might get an expose event from the platform as part of
+    // closing the window from ~QWidget, to support animated close
+    // transitions. But at that point we no longer have a widget
+    // subclass to draw a new frame, so skip the expose event.
+    if (exposed && wPriv->data.in_destructor)
+        return;
+
     if (wPriv->childrenHiddenByWState) {
         // If widgets has been previously hidden by window state change event
         // and they aren't yet shown...
@@ -1140,8 +1145,7 @@ void QWidgetWindow::handleGestureEvent(QNativeGestureEvent *e)
 {
     // copy-pasted code to find correct widget follows:
     QObject *receiver = nullptr;
-    if (QApplicationPrivate::inPopupMode()) {
-        QWidget *popup = QApplication::activePopupWidget();
+    if (auto *popup = QApplication::activePopupWidget()) {
         QWidget *popupFocusWidget = popup->focusWidget();
         receiver = popupFocusWidget ? popupFocusWidget : popup;
     }

@@ -182,7 +182,7 @@ QT_BEGIN_NAMESPACE
     item as a background will hide the graph. Clears the whole window before
     rendering the graph, including the areas outside the graph. If the surface
     format of the window supports antialiasing, it will be used (see
-    \c {qDefaultSurfaceFormat()}).
+    \l {QQuick3D::idealSurfaceFormat()}).
     This rendering mode offers the best performance at the expense of
     non-standard QML behavior. For example, the graphs do not obey the z ordering
     of QML items and the opacity value has no effect on them.

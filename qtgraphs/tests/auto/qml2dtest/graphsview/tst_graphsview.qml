@@ -195,8 +195,8 @@ Item {
             compare(shadowBarWidthSpy.count, 1)
             compare(shadowXOffsetSpy.count, 1)
             compare(shadowYOffsetSpy.count, 1)
-            compare(axisXSpy.count, 0)
-            compare(axisYSpy.count, 0)
+            compare(axisXSpy.count, 1)
+            compare(axisYSpy.count, 1)
             compare(orientationSpy.count, 0)
         }
 

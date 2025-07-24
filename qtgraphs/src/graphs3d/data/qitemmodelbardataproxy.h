@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QITEMMODELBARDATAPROXY_H
-#define QITEMMODELBARDATAPROXY_H
+#ifndef QTGRAPHS_QITEMMODELBARDATAPROXY_H
+#define QTGRAPHS_QITEMMODELBARDATAPROXY_H
 
 #include <QtCore/qabstractitemmodel.h>
 #include <QtCore/qregularexpression.h>

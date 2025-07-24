@@ -199,6 +199,8 @@ static const char *osVer_helper(QOperatingSystemVersion version = QOperatingSyst
             return "10";
         }
         // else: Server
+        if (osver.dwBuildNumber >= 26100)
+            return "Server 2025";
         if (osver.dwBuildNumber >= 20348)
             return "Server 2022";
         if (osver.dwBuildNumber >= 17763)
@@ -518,7 +520,7 @@ QString QSysInfo::buildCpuArchitecture()
 
     Values returned by this function are mostly stable: an attempt will be made
     to ensure that they stay constant over time and match the values returned
-    by QSysInfo::builldCpuArchitecture(). However, due to the nature of the
+    by buildCpuArchitecture(). However, due to the nature of the
     operating system functions being used, there may be discrepancies.
 
     Typical returned values are (note: list not exhaustive):

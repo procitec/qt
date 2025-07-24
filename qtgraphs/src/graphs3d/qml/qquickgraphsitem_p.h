@@ -875,6 +875,7 @@ private:
 
     QVector3D m_labelPosition = QVector3D();
     QVector3D m_fontScaled = QVector3D();
+    bool m_labelsNeedupdate = false;
 
     float m_initialZoomLevel = -1.0f;
     void setUpCamera();

@@ -26,6 +26,18 @@ Q_DECLARE_LOGGING_CATEGORY(lcQuick3DXr);
 
     \quotefromfile xr_simple/main.qml
     \printto XrOrigin
+
+    \section1 Platform notes
+
+    \section2 Meta Quest Devices
+
+    To \l{XrView::passthroughEnabled}{enable passthrough} you need to add the
+    following permisson your app's \c AndroidManifest.xml file:
+
+    \badcode
+    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="false"/>
+    \endcode
+
 */
 
 QQuick3DXrView::QQuick3DXrView()
@@ -94,35 +106,38 @@ QQuick3DXrRuntimeInfo *QQuick3DXrView::runtimeInfo() const
 
 void QQuick3DXrView::setEnvironment(QQuick3DSceneEnvironment *environment)
 {
-    if (environment != m_sceneEnvironment)
-        m_sceneEnvironment = environment;
+    QQuick3DViewport *view = m_xrManager.m_vrViewport;
 
-    if (!m_xrManager.m_vrViewport)
+    // If the view is not created yet, we can't set the environment which means we need to
+    // set it again once the view is created...
+    if (!view) {
+        m_pendingSceneEnvironment = environment;
         return;
+    }
 
-    auto oldEnvironment = m_xrManager.m_vrViewport->environment();
+    auto oldEnvironment = view->environment();
     if (oldEnvironment == environment)
         return;
 
-    if (oldEnvironment) {
-        disconnect(oldEnvironment, &QQuick3DSceneEnvironment::backgroundModeChanged, this, &QQuick3DXrView::handleClearColorChanged);
-        disconnect(oldEnvironment, &QQuick3DSceneEnvironment::clearColorChanged, this, &QQuick3DXrView::handleClearColorChanged);
-        disconnect(oldEnvironment, &QQuick3DSceneEnvironment::antialiasingModeChanged, this, &QQuick3DXrView::handleAAChanged);
-        disconnect(oldEnvironment, &QQuick3DSceneEnvironment::antialiasingQualityChanged, this, &QQuick3DXrView::handleAAChanged);
-    }
+    if (oldEnvironment)
+        disconnect(oldEnvironment);
 
-    m_xrManager.m_vrViewport->setEnvironment(environment);
+    view->setEnvironment(environment);
+
+    // The view will always have an environment, setting the environment to null will just mean the default environment
+    // is used. So querying the environment from the view is always valid (and we should do it here to make sure we're
+    // in sync with the view).
+    environment = view->environment();
+
     handleClearColorChanged();
     handleAAChanged();
 
-    if (environment) {
-        connect(environment, &QQuick3DSceneEnvironment::backgroundModeChanged, this, &QQuick3DXrView::handleClearColorChanged);
-        connect(environment, &QQuick3DSceneEnvironment::clearColorChanged, this, &QQuick3DXrView::handleClearColorChanged);
-        connect(environment, &QQuick3DSceneEnvironment::antialiasingModeChanged, this, &QQuick3DXrView::handleAAChanged);
-        connect(environment, &QQuick3DSceneEnvironment::antialiasingQualityChanged, this, &QQuick3DXrView::handleAAChanged);
-    }
+    connect(environment, &QQuick3DSceneEnvironment::backgroundModeChanged, this, &QQuick3DXrView::handleClearColorChanged);
+    connect(environment, &QQuick3DSceneEnvironment::clearColorChanged, this, &QQuick3DXrView::handleClearColorChanged);
+    connect(environment, &QQuick3DSceneEnvironment::antialiasingModeChanged, this, &QQuick3DXrView::handleAAChanged);
+    connect(environment, &QQuick3DSceneEnvironment::antialiasingQualityChanged, this, &QQuick3DXrView::handleAAChanged);
 
-    emit environmentChanged(m_xrManager.m_vrViewport->environment());
+    emit environmentChanged(environment);
 }
 
 /*!
@@ -283,9 +298,15 @@ bool QQuick3DXrView::init()
         return false;
     }
 
+    connect(&m_xrManager, &QQuick3DXrManager::sessionEnded, this, &QQuick3DXrView::handleSessionEnded);
+    connect(&m_xrManager, &QQuick3DXrManager::frameReady, this, &QQuick3DXrView::frameReady);
+    connect(&m_xrManager, &QQuick3DXrManager::referenceSpaceChanged, this, &QQuick3DXrView::referenceSpaceChanged);
+    connect(&m_xrManager, &QQuick3DXrManager::multiViewRenderingEnabledChanged, this, &QQuick3DXrView::multiViewRenderingEnabledChanged);
+    connect(&m_xrManager, &QQuick3DXrManager::initialized, this, &QQuick3DXrView::init, Qt::UniqueConnection);
+
     if (!m_xrManager.isReady() && !m_xrManager.initialize()) {
         qCDebug(lcQuick3DXr, "Waiting for XR platform to be initialized");
-        connect(&m_xrManager, &QQuick3DXrManager::initialized, this, &QQuick3DXrView::init, Qt::UniqueConnection);
+
         return false;
     }
 
@@ -300,7 +321,7 @@ bool QQuick3DXrView::init()
 
     // Create View3D
     QSSG_CHECK_X(m_xrManager.m_vrViewport == nullptr, "View3D already created!");
-    auto viewport = new QQuick3DViewport();
+    auto viewport = new QQuick3DViewport(QQuick3DViewport::PrivateInstanceType::XrViewInstance);
     viewport->setRenderMode(QQuick3DViewport::Underlay);
     auto contentItem = m_xrManager.m_quickWindow->contentItem();
     viewport->setParentItem(contentItem);
@@ -322,13 +343,9 @@ bool QQuick3DXrView::init()
         connect(env, &QQuick3DSceneEnvironment::antialiasingQualityChanged, this, &QQuick3DXrView::handleAAChanged);
     }
 
-    connect(&m_xrManager, &QQuick3DXrManager::sessionEnded, this, &QQuick3DXrView::handleSessionEnded);
-    connect(&m_xrManager, &QQuick3DXrManager::frameReady, this, &QQuick3DXrView::frameReady);
-    connect(&m_xrManager, &QQuick3DXrManager::referenceSpaceChanged, this, &QQuick3DXrView::referenceSpaceChanged);
-    connect(&m_xrManager, &QQuick3DXrManager::multiViewRenderingEnabledChanged, this, &QQuick3DXrView::multiViewRenderingEnabledChanged);
-
     // NOTE: If we've called async, we need to make sure the environment, etc. is set again
-    setEnvironment(m_sceneEnvironment);
+    setEnvironment(m_pendingSceneEnvironment);
+    m_pendingSceneEnvironment = nullptr;
 
     m_xrManager.update();
 

@@ -19,6 +19,7 @@ private slots:
 
     void initialProperties();
     void initializeProperties();
+    void invalidProperties();
 
 private:
     QCustom3DItem *m_custom;
@@ -127,6 +128,17 @@ void tst_custom::initializeProperties()
     QCOMPARE(shadowCastingSpy.size(), 1);
     QCOMPARE(scalingAbsoluteSpy.size(), 1);
     QCOMPARE(updateSpy.size(), 10);
+}
+
+void tst_custom::invalidProperties()
+{
+    QVERIFY(m_custom);
+
+    // Verify we're getting this warning
+    QTest::ignoreMessage(QtWarningMsg, "Mesh file :/nonexistentitem.mesh does not exist.");
+    m_custom->setMeshFile(":/nonexistentitem.mesh");
+    QEXPECT_FAIL("", "Nonexistent file given", Continue);
+    QCOMPARE(m_custom->meshFile(), QString(":/nonexistentitem.mesh"));
 }
 
 QTEST_MAIN(tst_custom)

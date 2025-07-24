@@ -37,9 +37,7 @@ QT_BEGIN_NAMESPACE
  *
  * \section1 How to construct a minimal Q3DBarsWidgetItem graph
  *
- * First, construct an instance of Q3DBarsWidgetItem. Since we are running the graph as
- * a top-level window in this example, we need to clear the \c
- * Qt::FramelessWindowHint flag, which is set by default:
+ * First, construct an instance of Q3DBarsWidgetItem:
  *
  * \snippet doc_src_q3dbars_construction.cpp 4
  *

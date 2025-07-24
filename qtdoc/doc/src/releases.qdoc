@@ -106,8 +106,10 @@
     The Qt Company provides \l{https://www.qt.io/qt-support/}{commercial support} for Qt.
     Under \l{https://www.qt.io/terms-conditions/#appendix-9}{standard support conditions}, each
     minor version of Qt is supported for one year, starting from the date of the minor release.
-    For Qt LTS versions the support is extended to three years, starting from the original
-    minor release (Qt x.y.0 release). Even longer support can be negotiated individually.
+    For Qt LTS versions before 6.8.0, the support is extended to three years,
+    starting from the original minor release (Qt x.y.0 release). Starting with
+    version 6.8.0, the LTS versions are supported for five years. Even longer
+    support can be negotiated individually.
 
     \target Supported Qt Versions
     \section1 Supported versions
@@ -119,7 +121,7 @@
         \li Standard support until
     \row
         \li Qt 6.8 LTS
-        \li Qt 6.8.1
+        \li Qt 6.8.3
         \li 2029-10-08
     \row
         \li Qt 6.7
@@ -127,13 +129,13 @@
         \li 2025-03-26
     \row
         \li Qt 6.5 LTS
-        \li Qt 6.5.7
+        \li Qt 6.5.8 (LTS, commercial only)
         \li 2026-03-30
     \row
         \li Qt 5.15 LTS
         \li Qt 5.15.16 (Open Source)
 
-            Qt 5.15.18 (Commercial)
+            Qt 5.15.18 (LTS, commercial only)
         \li 2023-05-26 (Qt Legacy licenses)
 
             2025-05-26 (Qt Subscription license holders only)
@@ -152,7 +154,7 @@
         \li Standard support until
     \row
         \li \b{Qt 6.8 LTS}
-        \li Qt 6.8.1
+        \li Qt 6.8.3
         \li 2029-10-08
     \row
         \li \b{Qt 6.7}
@@ -164,7 +166,7 @@
         \li Ended (ES is available)
     \row
         \li \b{Qt 6.5 LTS}
-        \li Qt 6.5.7
+        \li Qt 6.5.8
         \li 2026-03-30
     \row
         \li Qt 6.4

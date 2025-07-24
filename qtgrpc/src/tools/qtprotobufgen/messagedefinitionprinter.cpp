@@ -148,6 +148,13 @@ void MessageDefinitionPrinter::printRegisterBody()
     if (m_descriptor->full_name() == "google.protobuf.Any")
         m_printer->Print("QT_PREPEND_NAMESPACE(QtProtobuf)::Any::registerTypes();\n");
 
+    if (m_descriptor->file()->package() == "google.protobuf") {
+        if (common::hasCustomJsonCoversion(m_descriptor)) {
+            m_printer->Print({ { "type_name", m_descriptor->name() } },
+                CommonTemplates::CustomJsonHanderTemplate());
+        }
+    }
+
     common::iterateMessageFields(
             m_descriptor, [&](const FieldDescriptor *field, const PropertyMap &propertyMap) {
                 auto it = propertyMap.find("full_type");

@@ -5,6 +5,8 @@
 
 #include <QTest>
 
+#include <QtCore/qspan.h>
+
 // for negative testing (can't convert from)
 #include <deque>
 #include <list>
@@ -75,6 +77,26 @@ static_assert(CanConvert<      std::array<char, 1> >);
 static_assert(CanConvert<const std::array<char, 1> >);
 static_assert(CanConvert<      std::array<char, 1>&>);
 static_assert(CanConvert<const std::array<char, 1>&>);
+
+static_assert(CanConvert<      QSpan<char> >);
+static_assert(CanConvert<const QSpan<char> >);
+static_assert(CanConvert<      QSpan<char>&>);
+static_assert(CanConvert<const QSpan<char>&>);
+
+static_assert(CanConvert<      QSpan<char, 42> >);
+static_assert(CanConvert<const QSpan<char, 42> >);
+static_assert(CanConvert<      QSpan<char, 42>&>);
+static_assert(CanConvert<const QSpan<char, 42>&>);
+
+static_assert(CanConvert<      QSpan<std::byte> >);
+static_assert(CanConvert<const QSpan<std::byte> >);
+static_assert(CanConvert<      QSpan<std::byte>&>);
+static_assert(CanConvert<const QSpan<std::byte>&>);
+
+static_assert(CanConvert<      QSpan<std::byte, 42> >);
+static_assert(CanConvert<const QSpan<std::byte, 42> >);
+static_assert(CanConvert<      QSpan<std::byte, 42>&>);
+static_assert(CanConvert<const QSpan<std::byte, 42>&>);
 
 static_assert(!CanConvert<std::deque<char>>);
 static_assert(!CanConvert<std::list<char>>);
@@ -673,7 +695,11 @@ void tst_QByteArrayView::fromContainers() const
     fromContainer<Char, QVector<Char>>();
     fromContainer<Char, QVarLengthArray<Char>>();
     fromContainer<Char, std::vector<Char>>();
-    fromContainer<Char, std::basic_string<Char>>();
+    if constexpr (std::is_same_v<Char, char>) {
+        // std::basic_string only supports a few specific types
+        // (std::char_traits requirement)
+        fromContainer<Char, std::basic_string<Char>>();
+    }
 }
 
 void tst_QByteArrayView::comparison() const

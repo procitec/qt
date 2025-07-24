@@ -26,21 +26,10 @@ QT_BEGIN_NAMESPACE
  * You should not need to use this class directly, but one of its subclasses
  * instead.
  *
- * Anti-aliasing is turned on by default on C++, except in OpenGL ES2
- * environments, where anti-aliasing is not supported by Qt Graphs.
- * To specify non-default anti-aliasing for a graph, give a custom surface
- * format as a constructor parameter. You can use the convenience function \c
- * qDefaultSurfaceFormat() to create the surface format object.
- *
- * \note Q3DGraphsWidgetItem sets window flag \c Qt::FramelessWindowHint on by
- * default. If you want to display graph windows as standalone windows with
- * regular window frame, clear this flag after constructing the graph. For
- * example:
- *
- * \code
- *  Q3DBarsWidgetItem *graphWindow = new Q3DBarsWidgetItem;
- *  graphWindow->setFlags(graphWindow->flags() ^ Qt::FramelessWindowHint);
- * \endcode
+ * Multisampling is turned off by default in \c {QSurfaceFormat}.
+ * To enable multisampling, set a custom surface format as
+ * a default surface format. To get the custom surface format,
+ * use \l {QQuick3D::idealSurfaceFormat()}.
  *
  * \sa Q3DBarsWidgetItem, Q3DScatterWidgetItem, Q3DSurfaceWidgetItem, {Qt Graphs C++ Classes for 3D}
  */
@@ -116,7 +105,6 @@ void Q3DGraphsWidgetItem::setActiveTheme(QGraphsTheme *activeTheme)
 {
     Q_D(Q3DGraphsWidgetItem);
     d->m_graphsItem->setTheme(activeTheme);
-    emit activeThemeChanged(activeTheme);
 }
 
 /*!
@@ -150,7 +138,6 @@ void Q3DGraphsWidgetItem::setSelectionMode(const QtGraphs3D::SelectionFlags &sel
 {
     Q_D(Q3DGraphsWidgetItem);
     d->m_graphsItem->setSelectionMode(selectionMode);
-    emit selectionModeChanged(selectionMode);
 }
 
 /*!
@@ -176,7 +163,6 @@ void Q3DGraphsWidgetItem::setShadowQuality(const QtGraphs3D::ShadowQuality &shad
 {
     Q_D(Q3DGraphsWidgetItem);
     d->m_graphsItem->setShadowQuality(shadowQuality);
-    emit shadowQualityChanged(shadowQuality);
 }
 
 /*!
@@ -280,9 +266,8 @@ void Q3DGraphsWidgetItem::releaseCustomItem(QCustom3DItem *item)
  */
 QList<QCustom3DItem *> Q3DGraphsWidgetItem::customItems() const
 {
-    // TODO: API missing in QQuickGraphsItem (QTBUG-99844)
-    return {};
-//    return m_graphsItem->customItems();
+    Q_D(const Q3DGraphsWidgetItem);
+    return d->m_graphsItem->customItems();
 }
 
 /*!
@@ -377,8 +362,7 @@ QtGraphs3D::ElementType Q3DGraphsWidgetItem::selectedElement() const
  * rendered image when it's ready. Image is rendered with the current
  * antialiasing settings.
  *
- * \note OpenGL ES2 does not support anitialiasing.
- * \sa QQuickItem::grabToImage
+ * \sa QQuickItem::grabToImage()
  */
 QSharedPointer<QQuickItemGrabResult> Q3DGraphsWidgetItem::renderToImage(QSize imageSize) const
 {
@@ -630,10 +614,12 @@ void Q3DGraphsWidgetItem::setLightColor(QColor newLightColor)
 /*!
  * \property Q3DGraphsWidgetItem::gridLineType
  *
- * \brief Whether the grid lines type is Q3DGraphsWidgetItem::GridLineType::Shader or
- * Q3DGraphsWidgetItem::GridLineType::Geometry.
+ * \brief Whether the grid lines type is QtGraphs3D::GridLineType::Shader or
+ * QtGraphs3D::GridLineType::Geometry.
  *
  * This value affects all grid lines.
+ *
+ * \sa QtGraphs3D::GridLineType
  */
 QtGraphs3D::GridLineType Q3DGraphsWidgetItem::gridLineType() const
 {
@@ -647,6 +633,19 @@ void Q3DGraphsWidgetItem::setGridLineType(const QtGraphs3D::GridLineType &gridLi
     d->m_graphsItem->setGridLineType(gridLineType);
 }
 
+/*!
+ * Sets the given \a widget instance to be used as the \l QQuickWidget for the widget item.
+ * The graph is set as the content of the QQuickWidget.
+ *
+ * Graphs can only be rendered in widget applications using QQuickWidgets.
+ *
+ * Usage example:
+ * \code
+ * QQuickWidget quickwidget;
+ * Q3DBarsWidgetItem graph;
+ * graph.setWidget(&quickwidget);
+ * \endcode
+ */
 void Q3DGraphsWidgetItem::setWidget(QQuickWidget *widget)
 {
     Q_D(Q3DGraphsWidgetItem);
@@ -657,6 +656,9 @@ void Q3DGraphsWidgetItem::setWidget(QQuickWidget *widget)
     }
 }
 
+/*!
+ * Returns a pointer to the \l QQuickWidget instance that has been set for the widget item.
+ */
 QQuickWidget *Q3DGraphsWidgetItem::widget() const
 {
     Q_D(const Q3DGraphsWidgetItem);
@@ -826,9 +828,6 @@ void Q3DGraphsWidgetItem::setMaxCameraZoomLevel(float level)
  * Valid coordinate values are between \c{-1.0...1.0}, where the edge values
  * indicate the edges of the corresponding axis range. Any values outside this
  * range are clamped to the edge.
- *
- * \note For bar graphs, the Y-coordinate is ignored and camera always targets a
- * point on the horizontal background.
  */
 QVector3D Q3DGraphsWidgetItem::cameraTargetPosition() const
 {
@@ -838,6 +837,8 @@ QVector3D Q3DGraphsWidgetItem::cameraTargetPosition() const
 
 void Q3DGraphsWidgetItem::setCameraTargetPosition(QVector3D target)
 {
+    Q_D(Q3DGraphsWidgetItem);
+
     QVector3D newTarget = target;
 
     if (newTarget.x() < -1.0f)
@@ -855,7 +856,7 @@ void Q3DGraphsWidgetItem::setCameraTargetPosition(QVector3D target)
     else if (newTarget.z() > 1.0f)
         newTarget.setZ(1.0f);
 
-    if (Q_D(Q3DGraphsWidgetItem); d->m_graphsItem->cameraTargetPosition() != newTarget) {
+    if (d->m_graphsItem->cameraTargetPosition() != newTarget) {
         if (d->m_graphsItem->cameraPreset() != QtGraphs3D::CameraPreset::NoPreset)
             d->m_graphsItem->setCameraPreset(QtGraphs3D::CameraPreset::NoPreset);
         d->m_graphsItem->setCameraTargetPosition(newTarget);
@@ -881,7 +882,7 @@ bool Q3DGraphsWidgetItem::wrapCameraXRotation() const
 void Q3DGraphsWidgetItem::setWrapCameraXRotation(bool wrap)
 {
     Q_D(Q3DGraphsWidgetItem);
-    d->m_graphsItem->setCameraXRotation(wrap);
+    d->m_graphsItem->setWrapCameraXRotation(wrap);
 }
 
 /*!
@@ -958,6 +959,7 @@ void Q3DGraphsWidgetItem::doPicking(QPoint point)
 void Q3DGraphsWidgetItem::setMeasureFps(bool enable)
 {
     Q_D(Q3DGraphsWidgetItem);
+
     d->m_graphsItem->setMeasureFps(enable);
     if (enable) {
         QObject::connect(d->m_graphsItem.get(),
@@ -1427,6 +1429,108 @@ void Q3DGraphsWidgetItemPrivate::createGraph()
                      &QQuickGraphsItem::gridLineTypeChanged,
                      q,
                      &Q3DGraphsWidgetItem::gridLineTypeChanged);
+
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::activeThemeChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::activeThemeChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::selectionModeChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::selectionModeChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::shadowQualityChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::shadowQualityChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::cameraPresetChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::cameraPresetChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::cameraXRotationChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::cameraXRotationChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::cameraYRotationChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::cameraYRotationChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::minCameraXRotationChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::minCameraXRotationChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::maxCameraXRotationChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::maxCameraXRotationChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::minCameraYRotationChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::minCameraYRotationChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::maxCameraYRotationChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::maxCameraYRotationChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::cameraZoomLevelChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::cameraZoomLevelChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::minCameraZoomLevelChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::minCameraZoomLevelChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::maxCameraZoomLevelChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::maxCameraZoomLevelChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::wrapCameraXRotationChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::wrapCameraXRotationChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::wrapCameraYRotationChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::wrapCameraYRotationChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::measureFpsChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::measureFpsChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::orthoProjectionChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::orthoProjectionChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::aspectRatioChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::aspectRatioChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::optimizationHintChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::optimizationHintChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::polarChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::polarChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::labelMarginChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::labelMarginChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::radialLabelOffsetChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::radialLabelOffsetChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::horizontalAspectRatioChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::horizontalAspectRatioChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::localeChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::localeChanged);
+    QObject::connect(m_graphsItem.get(),
+                     &QQuickGraphsItem::marginChanged,
+                     q,
+                     &Q3DGraphsWidgetItem::marginChanged);
+
     m_widget->installEventFilter(q);
 }
 

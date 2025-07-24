@@ -68,6 +68,7 @@ qt_internal_add_module(Core
         global/qoverload.h
         global/qprocessordetection.h
         global/qrandom.cpp global/qrandom.h global/qrandom_p.h
+        global/qstdlibdetection.h
         global/qswap.h
         global/qsysinfo.cpp global/qsysinfo.h
         global/qsystemdetection.h
@@ -96,6 +97,7 @@ qt_internal_add_module(Core
         global/q20map.h
         global/q20memory.h
         global/q20type_traits.h
+        global/q20utility.h
         global/q20vector.h
         global/q23functional.h
         global/q23utility.cpp # remove once we have a user that tests this
@@ -328,9 +330,11 @@ qt_internal_add_module(Core
         text/qstringconverter.cpp # enum Data
         tools/qcryptographichash.cpp # KeccakNISTInterface/Final
         io/qdebug.cpp # undef qDebug
+        io/qresource.cpp # QTBUG-132114
     NO_PCH_SOURCES
         compat/removed_api.cpp
         global/qsimd.cpp
+        kernel/qsocketnotifier.cpp # defines BUILDING_QSOCKETNOTIFIER
     DEFINES
         QT_NO_CONTEXTLESS_CONNECT
         QT_NO_FOREACH
@@ -465,6 +469,7 @@ if(QT_FEATURE_reduce_relocations AND UNIX AND GCC)
 endif()
 
 if(ANDROID)
+    _qt_internal_add_android_executable_finalizer(Core)
     set_property(TARGET Core APPEND PROPERTY QT_ANDROID_BUNDLED_JAR_DEPENDENCIES
         jar/Qt${QtBase_VERSION_MAJOR}Android.jar
     )
@@ -671,6 +676,11 @@ qt_internal_extend_target(Core CONDITION INTEGRITY
 # Remove if QCC (gcc version 8.3.0) for QNX 7.1.0 is no longer supported
 qt_internal_extend_target(Core CONDITION QCC AND (CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "8.3.0")
     PUBLIC_COMPILE_OPTIONS $<$<COMPILE_LANGUAGE:CXX>:-Wno-invalid-offsetof>
+)
+
+qt_internal_extend_target(Core CONDITION QNX AND QT_FEATURE_fsnotify
+    LIBRARIES
+        fsnotify
 )
 
 qt_internal_extend_target(Core CONDITION LINUX AND QT_BUILD_SHARED_LIBS
@@ -1390,6 +1400,8 @@ if(QT_FEATURE_mimetype AND QT_FEATURE_mimetype_database)
     qt_internal_extend_target(Core
         SOURCES ${qmimeprovider_db_output}
         INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/.rcc"
+        ATTRIBUTION_FILE_DIR_PATHS
+            mimetypes/3rdparty
     )
     set_source_files_properties(${qmimeprovider_db_output} PROPERTIES
         GENERATED TRUE

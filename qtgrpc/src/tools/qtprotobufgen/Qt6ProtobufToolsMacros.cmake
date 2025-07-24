@@ -195,6 +195,11 @@ function(_qt_internal_protoc_generate target generator output_directory)
         GENERATED TRUE
     )
 
+    get_target_property(proto_files ${target} _qt_internal_proto_files)
+    list(APPEND proto_files "${arg_PROTO_FILES}")
+    list(REMOVE_DUPLICATES proto_files)
+    set_target_properties(${target} PROPERTIES _qt_internal_proto_files "${proto_files}")
+
     target_include_directories(${target} PUBLIC "$<BUILD_INTERFACE:${output_directory}>")
 endfunction()
 
@@ -360,6 +365,11 @@ function(qt6_add_protobuf target)
         ${arg_PROTO_FILES}
     )
 
+    if(NOT proto_files AND arg_PROTO_FILES)
+        _qt_internal_protobuf_missing_definitions_warning(${target} protobuf "${arg_PROTO_FILES}")
+        return()
+    endif()
+
     set(output_directory "${CMAKE_CURRENT_BINARY_DIR}")
     if(DEFINED arg_OUTPUT_DIRECTORY)
         set(output_directory "${arg_OUTPUT_DIRECTORY}")
@@ -413,7 +423,7 @@ function(qt6_add_protobuf target)
         )
 
         list(APPEND type_registrations
-            "${output_directory}/${package_full_path}${basename}_protobuftyperegistrations.cpp")
+            "${output_directory}/${package_full_path}${basename}_qtprotoreg.cpp")
     endforeach()
 
     if(TARGET ${target})
@@ -523,10 +533,22 @@ function(qt6_add_protobuf target)
 
     target_sources(${target} PRIVATE ${cpp_sources} ${qml_sources})
 
+    get_property(is_use_protobuf_list_aliases_set TARGET ${target}
+        PROPERTY QT_USE_PROTOBUF_LIST_ALIASES SET)
+    if(NOT is_use_protobuf_list_aliases_set)
+        set_target_properties(${target}
+            PROPERTIES
+                QT_USE_PROTOBUF_LIST_ALIASES TRUE
+        )
+    endif()
+
     set_target_properties(${target}
         PROPERTIES
             AUTOMOC ON
     )
+
+    target_compile_definitions(${target} PUBLIC
+        $<$<BOOL:$<TARGET_PROPERTY:QT_USE_PROTOBUF_LIST_ALIASES>>:QT_USE_PROTOBUF_LIST_ALIASES>)
 
     if(WIN32)
         if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
@@ -553,17 +575,17 @@ function(qt6_add_protobuf target)
 
     set_source_files_properties(${type_registrations} PROPERTIES SKIP_AUTOGEN ON)
     if(is_static OR (WIN32 AND NOT is_executable))
-        if(TARGET ${target}_protobuf_registration)
-            target_sources(${target}_protobuf_registration PRIVATE ${type_registrations})
+        if(TARGET ${target}_qtprotoreg)
+            target_sources(${target}_qtprotoreg PRIVATE ${type_registrations})
         else()
-            add_library(${target}_protobuf_registration OBJECT ${type_registrations})
+            add_library(${target}_qtprotoreg OBJECT ${type_registrations})
             if(export_macro_file)
-                target_sources(${target}_protobuf_registration PRIVATE ${export_macro_file})
+                target_sources(${target}_qtprotoreg PRIVATE ${export_macro_file})
             endif()
 
             target_link_libraries(${target}
-                INTERFACE "$<TARGET_OBJECTS:$<TARGET_NAME:${target}_protobuf_registration>>")
-            add_dependencies(${target} ${target}_protobuf_registration)
+                INTERFACE "$<TARGET_OBJECTS:$<TARGET_NAME:${target}_qtprotoreg>>")
+            add_dependencies(${target} ${target}_qtprotoreg)
 
             get_target_property(num_deps ${target} _qt_qtprotobufgen_deps_num)
             if(num_deps)
@@ -572,13 +594,13 @@ function(qt6_add_protobuf target)
                 foreach(i RANGE 0 ${num_deps})
                     _qt_internal_get_generator_dep_target_name(deps_target ${target}
                         qtprotobufgen ${i})
-                    add_dependencies(${target}_protobuf_registration ${deps_target})
+                    add_dependencies(${target}_qtprotoreg ${deps_target})
                 endforeach()
             endif()
 
-            target_include_directories(${target}_protobuf_registration
+            target_include_directories(${target}_qtprotoreg
                 PRIVATE "$<GENEX_EVAL:$<TARGET_PROPERTY:${target},INCLUDE_DIRECTORIES>>")
-            target_link_libraries(${target}_protobuf_registration
+            target_link_libraries(${target}_qtprotoreg
                 PRIVATE
                     ${QT_CMAKE_EXPORT_NAMESPACE}::Platform
                     ${QT_CMAKE_EXPORT_NAMESPACE}::Protobuf
@@ -586,13 +608,13 @@ function(qt6_add_protobuf target)
             )
 
             if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-                target_compile_options(${target}_protobuf_registration
+                target_compile_options(${target}_qtprotoreg
                     PRIVATE "/Zc:__cplusplus" "/permissive-" "/bigobj")
             endif()
         endif()
         if(DEFINED arg_OUTPUT_TARGETS)
             list(APPEND ${arg_OUTPUT_TARGETS}
-                "${target}_protobuf_registration")
+                "${target}_qtprotoreg")
         endif()
     else()
         target_sources(${target} PRIVATE ${type_registrations})
@@ -629,6 +651,12 @@ function(qt6_add_protobuf target)
             )
         endif()
 
+        if(NOT TARGET ${QT_CMAKE_EXPORT_NAMESPACE}::ProtobufQuick)
+            message(FATAL_ERROR "QML option of the qt_add_protobuf command requires"
+                " ${QT_CMAKE_EXPORT_NAMESPACE}::ProtobufQuick target. Please make sure that you"
+                " have the respective Qt component found by adding it to the find_package call:"
+                "   find_package(${QT_CMAKE_EXPORT_NAMESPACE} COMPONENTS ProtobufQuick)")
+        endif()
         target_link_libraries(${target} PRIVATE
             ${QT_CMAKE_EXPORT_NAMESPACE}::ProtobufQuick
         )
@@ -724,4 +752,17 @@ function(_qt_internal_preparse_proto_file_common out_result out_package proto_fi
 
     set(${out_package} "${proto_package}" PARENT_SCOPE)
     set(${out_result} "${found_key}" PARENT_SCOPE)
+endfunction()
+
+function(_qt_internal_protobuf_missing_definitions_warning target generator_type proto_files)
+    if(TARGET ${target})
+        set(warning_action "adding")
+    else()
+        set(warning_action "extending")
+    endif()
+
+    if(NOT QT_SKIP_PROTOBUF_MISSING_DEFINITIONS_WARNING)
+        message(WARNING "PROTO_FILES ${proto_files} do not contain code for ${generator_type}"
+            " generator. Skipping ${warning_action} the ${target} target.")
+    endif()
 endfunction()

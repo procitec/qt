@@ -66,6 +66,8 @@ private slots:
     void oss_fuzz_24131();
     void oss_fuzz_24738();
     void oss_fuzz_61586();
+    void oss_fuzz_42532991();
+    void oss_fuzz_399769595();
     void imageRendering();
     void illegalAnimateTransform_data();
     void illegalAnimateTransform();
@@ -83,6 +85,7 @@ private slots:
     void testFeMerge();
     void testFeComposite();
     void testFeGaussian();
+    void testUseCycles();
 
 #ifndef QT_NO_COMPRESS
     void testGzLoading();
@@ -834,7 +837,7 @@ void tst_QSvgRenderer::testGzLoading()
     QVERIFY(resourceRenderer.isValid());
 
     QFile largeFileGz(QFINDTESTDATA("large.svgz"));
-    largeFileGz.open(QIODevice::ReadOnly);
+    QVERIFY(largeFileGz.open(QIODevice::ReadOnly));
     QByteArray data = largeFileGz.readAll();
     QSvgRenderer autoDetectGzData(data);
     QVERIFY(autoDetectGzData.isValid());
@@ -856,9 +859,9 @@ void tst_QSvgRenderer::testGzHelper_data()
             "cbcfe70200a865327e04000000")) << QByteArray("foo\n");
 
     QFile largeFileGz(QFINDTESTDATA("large.svgz"));
-    largeFileGz.open(QIODevice::ReadOnly);
+    QVERIFY(largeFileGz.open(QIODevice::ReadOnly));
     QFile largeFile(QFINDTESTDATA("large.svg"));
-    largeFile.open(QIODevice::ReadOnly);
+    QVERIFY(largeFile.open(QIODevice::ReadOnly));
     QTest::newRow("large") << largeFileGz.readAll() << largeFile.readAll();
 
     QTest::newRow("zeroes") << QByteArray::fromHex(QByteArray("1f8b0800131f9348000333"
@@ -881,7 +884,7 @@ void tst_QSvgRenderer::testGzHelper()
     QFETCH(QByteArray, out);
 
     QBuffer buffer(&in);
-    buffer.open(QIODevice::ReadOnly);
+    QVERIFY(buffer.open(QIODevice::ReadOnly));
     QVERIFY(buffer.isReadable());
     QByteArray result = qt_inflateGZipDataFrom(&buffer);
     QCOMPARE(result, out);
@@ -1730,10 +1733,22 @@ void tst_QSvgRenderer::oss_fuzz_61586()
     QSvgRenderer().load(QByteArray("<svg><style>*{font-family:q}<linearGradient><stop>"));
 }
 
+void tst_QSvgRenderer::oss_fuzz_42532991()
+{
+    // resulted in stack overflow
+    QSvgRenderer().load(QByteArray("<svg><pattern height=\"3\" width=\"9\" id=\"c\"><path d=\"v4T1-\" stroke=\"url(#c)\"><symbol>"));
+}
+
+void tst_QSvgRenderer::oss_fuzz_399769595()
+{
+    // resulted in null pointer deref
+    QSvgRenderer().load(QByteArray("<svg><linearGradient id=\"c\"/><polygon stroke=\"url(#c)\"/><polygon points=\"-- 7-\" stroke=\"url(#c)\"/></svg>"));
+}
+
 QByteArray image_data_url(QImage &image) {
     QByteArray data;
     QBuffer buffer(&data);
-    buffer.open(QBuffer::ReadWrite);
+    QTEST_ASSERT(buffer.open(QBuffer::ReadWrite));
     image.save(&buffer, "PNG");
     buffer.close();
     QByteArray url("data:image/png;base64,");
@@ -2030,6 +2045,21 @@ void tst_QSvgRenderer::testCycles()
                       "<rect x=\"0\" y=\"0\" width=\"10\" height=\"10\" fill=\"url(#pattern)\"/>"
                       "</pattern>"
                       "</svg>");
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(!renderer.isValid());
+}
+
+void tst_QSvgRenderer::testUseCycles()
+{
+    QByteArray svgDoc(R"(<svg viewBox="0 0 200 200">
+        <g xml:id="group-1">
+          <use xml:id="use-1" xlink:href="#group-2" />
+        </g>
+        <g xml:id="group-2">
+          <use xml:id="use-2" xlink:href="#group-1" />
+        </g>
+    </svg>)");
 
     QSvgRenderer renderer(svgDoc);
     QVERIFY(!renderer.isValid());

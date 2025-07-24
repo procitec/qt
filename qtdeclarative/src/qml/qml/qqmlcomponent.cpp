@@ -186,6 +186,12 @@ V4_DEFINE_EXTENSION(QQmlComponentExtension, componentExtension);
     \c Component objects can also be created dynamically using
     \l{QtQml::Qt::createComponent()}{Qt.createComponent()}.
 
+    \c {Component}s are useful to declare a type where you only need an
+    instance of the type without having to add an entire new file. However,
+    you cannot name this type and consequently can't use it to declare a
+    property or use it in a type annotation. If you need this, prefer using
+    \l{Defining Object Types through QML Documents#Inline Components}{inline components}.
+
     \section2 Creation Context
 
     The creation context of a Component corresponds to the context where the Component was declared.
@@ -386,7 +392,8 @@ bool QQmlComponentPrivate::setInitialProperty(
         }
         const QString lastProperty = properties.last();
         segment = scope.engine->newString(lastProperty);
-        object->put(segment, scope.engine->metaTypeToJS(value.metaType(), value.constData()));
+        QV4::ScopedValue v(scope, scope.engine->metaTypeToJS(value.metaType(), value.constData()));
+        object->put(segment, v);
         if (scope.engine->hasException) {
             qmlWarning(base, scope.engine->catchExceptionAsQmlError());
             scope.engine->hasException = false;
@@ -698,6 +705,9 @@ QQmlComponent::QQmlComponent(QQmlEngine *engine, QV4::ExecutableCompilationUnit 
     Sets the QQmlComponent to use the given QML \a data. If \a url
     is provided, it is used to set the component name and to provide
     a base path for items resolved by this component.
+
+    \warning The new component will shadow any existing component of
+    the same URL. You should not pass a URL of an existing component.
 */
 void QQmlComponent::setData(const QByteArray &data, const QUrl &url)
 {
@@ -1092,10 +1102,11 @@ QObject *QQmlComponentPrivate::beginCreate(QQmlRefPointer<QQmlContextData> conte
 
     if (!loadedType.isValid()) {
         enginePriv->referenceScarceResources();
-        state.initCreator(context, compilationUnit, creationContext);
+        const QString *icName = inlineComponentName.get();
+        state.initCreator(context, compilationUnit, creationContext, icName ? *icName : QString());
 
         QQmlObjectCreator::CreationFlags flags;
-        if (const QString *icName = inlineComponentName.get()) {
+        if (icName) {
             flags = QQmlObjectCreator::InlineComponent;
             if (start == -1)
                 start = compilationUnit->inlineComponentId(*icName);
@@ -1165,7 +1176,9 @@ void QQmlComponentPrivate::beginDeferred(QQmlEnginePrivate *enginePriv,
         auto creator = state.initCreator(
                     deferredData->context->parent(),
                     deferredData->compilationUnit,
-                    QQmlRefPointer<QQmlContextData>());
+                    QQmlRefPointer<QQmlContextData>(),
+                    deferredData->inlineComponentName
+                );
 
         if (!creator->populateDeferredProperties(object, deferredData))
             state.appendCreatorErrors();
@@ -1512,7 +1525,9 @@ void QQmlComponent::create(QQmlIncubator &incubator, QQmlContext *context, QQmlC
 
     p->compilationUnit = d->compilationUnit;
     p->enginePriv = enginePriv;
-    p->creator.reset(new QQmlObjectCreator(contextData, d->compilationUnit, d->creationContext, p.data()));
+    p->creator.reset(new QQmlObjectCreator(contextData, d->compilationUnit, d->creationContext,
+                                           d->inlineComponentName ? *d->inlineComponentName : QString(),
+                                           p.data()));
     p->subComponentToCreate = d->start;
 
     enginePriv->incubate(incubator, forContextData);
@@ -1584,7 +1599,7 @@ void QQmlComponentPrivate::incubateObject(
 
     incubatorPriv->compilationUnit = componentPriv->compilationUnit;
     incubatorPriv->enginePriv = enginePriv;
-    incubatorPriv->creator.reset(new QQmlObjectCreator(context, componentPriv->compilationUnit, componentPriv->creationContext));
+    incubatorPriv->creator.reset(new QQmlObjectCreator(context, componentPriv->compilationUnit, componentPriv->creationContext, inlineComponentName ? *inlineComponentName : QString()));
 
     if (start == -1) {
         if (const QString *icName = componentPriv->inlineComponentName.get()) {

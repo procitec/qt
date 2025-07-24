@@ -190,6 +190,13 @@ private:
     void polishAndUpdate();
     int getSeriesRendererIndex(QAbstractSeries *series);
 
+    static constexpr qreal m_defaultAxisTickersWidth = 15;
+    static constexpr qreal m_defaultAxisTickersHeight = 15;
+    static constexpr qreal m_defaultAxisLabelsWidth = 40;
+    static constexpr qreal m_defaultAxisLabelsHeight = 25;
+    static constexpr qreal m_defaultAxisXLabelsMargin = 0;
+    static constexpr qreal m_defaultAxisYLabelsMargin = 5;
+
     AxisRenderer *m_axisRenderer = nullptr;
     BarsRenderer *m_barsRenderer = nullptr;
     PointRenderer *m_pointRenderer = nullptr;
@@ -223,12 +230,12 @@ private:
     QRectF m_xAxisLabelsArea;
     QRectF m_yAxisLabelsArea;
     // Note: Add properties for these
-    qreal m_axisTickersWidth = 15;
-    qreal m_axisTickersHeight = 15;
-    qreal m_axisLabelsWidth = 40;
-    qreal m_axisLabelsHeight = 25;
-    qreal m_axisXLabelsMargin = 0;
-    qreal m_axisYLabelsMargin = 5;
+    qreal m_axisTickersWidth = m_defaultAxisTickersWidth;
+    qreal m_axisTickersHeight = m_defaultAxisTickersHeight;
+    qreal m_axisLabelsWidth = m_defaultAxisLabelsWidth;
+    qreal m_axisLabelsHeight = m_defaultAxisLabelsHeight;
+    qreal m_axisXLabelsMargin = m_defaultAxisXLabelsMargin;
+    qreal m_axisYLabelsMargin = m_defaultAxisYLabelsMargin;
     // Calculated based the the above
     qreal m_axisWidth = 0;
     qreal m_axisHeight = 0;

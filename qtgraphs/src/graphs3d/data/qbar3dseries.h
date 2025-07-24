@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QBAR3DSERIES_H
-#define QBAR3DSERIES_H
+#ifndef QTGRAPHS_QBAR3DSERIES_H
+#define QTGRAPHS_QBAR3DSERIES_H
 
 #include <QtCore/qpoint.h>
 #include <QtGraphs/qabstract3dseries.h>

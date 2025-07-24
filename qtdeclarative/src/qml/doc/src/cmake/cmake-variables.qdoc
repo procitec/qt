@@ -54,8 +54,8 @@ If \c{.qmlls.ini} files already exist there, then they are overwritten.
 \note Using \c QT_QML_GENERATE_QMLLS_INI requires a CMake version >= 3.19.
 
 These \c{.qmlls.ini} files contain the path to the last configured build directory,
-and is needed by \l{\QMLLS Reference}{\QMLLS} to find user defined modules. See also
-\l{\QMLLS Reference}{\QMLLS} about the other ways of passing build folders to \QMLLS.
+and is needed by \l{\QMLLS} to find user defined modules. See also
+\l{\QMLLS} about the other ways of passing build folders to \QMLLS.
 
 
 As this variable is used for IDE integration, it should normally not be set in a project itself, but
@@ -109,3 +109,27 @@ qt_add_qml_module(MyModule
 
 */
 
+/*!
+\page cmake-variable-qt-qml-generate-aotstats.html
+\ingroup cmake-variables-qtqml
+
+\title QT_QML_GENERATE_AOTSTATS
+
+\brief Controls whether QML Compiler statistics collection is enabled.
+\cmakevariablesince 6.8.3
+
+When a QML project is configured using \l{qt_add_qml_modules}, by default,
+\l{QML script compiler#Obtaining statistics about the compilation of functions and bindings}{statistics}
+from the compilation of QML code will be collected. You can explicitly opt in
+or out of this by setting the \c{QT_QML_GENERATE_AOTSTATS} variable. It can be
+set project-wide by passing
+\badcode
+-DQT_QML_GENERATE_AOTSTATS=OFF
+\endcode
+to the CMake executable, or by setting it directly in the corresponding
+CMakeLists.txt file before the first call to \l{qt_add_qml_module}.
+\badcode
+set(QT_QML_GENERATE_AOTSTATS OFF)
+\endcode
+
+*/

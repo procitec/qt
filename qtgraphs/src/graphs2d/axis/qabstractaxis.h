@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QABSTRACTAXIS_H
-#define QABSTRACTAXIS_H
+#ifndef QTGRAPHS_QABSTRACTAXIS_H
+#define QTGRAPHS_QABSTRACTAXIS_H
 
 #include <QtCore/qobject.h>
 #include <QtCore/qvariant.h>
@@ -124,4 +124,4 @@ private:
 
 QT_END_NAMESPACE
 
-#endif // QABSTRACTAXIS_H
+#endif // QTGRAPHS_QABSTRACTAXIS_H

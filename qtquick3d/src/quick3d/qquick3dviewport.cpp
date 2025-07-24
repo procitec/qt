@@ -189,7 +189,7 @@ public:
 
 /*!
     \qmltype View3D
-    \inherits QQuickItem
+    \inherits Item
     \inqmlmodule QtQuick3D
     \brief Provides a viewport on which to render a 3D scene.
 
@@ -247,7 +247,6 @@ QQuick3DViewport::QQuick3DViewport(QQuickItem *parent)
     setFlag(ItemHasContents);
     m_camera = nullptr;
     m_sceneRoot = new QQuick3DSceneRootNode(this);
-    m_environment = new QQuick3DSceneEnvironment(m_sceneRoot);
     m_renderStats = new QQuick3DRenderStats();
     QQuick3DSceneManager *sceneManager = new QQuick3DSceneManager();
     QQuick3DObjectPrivate::get(m_sceneRoot)->refSceneManager(*sceneManager);
@@ -292,6 +291,8 @@ QQuick3DViewport::~QQuick3DViewport()
 
     delete m_sceneRoot;
     m_sceneRoot = nullptr;
+
+    delete m_builtInEnvironment;
 
     // m_renderStats is tightly coupled with the render thread, so can't delete while we
     // might still be rendering.
@@ -370,10 +371,26 @@ QQuick3DCamera *QQuick3DViewport::camera() const
 
     This property specifies the SceneEnvironment used to render the scene.
 
+    \note Setting this property to \c null will reset the SceneEnvironment to the default.
+
     \sa SceneEnvironment
 */
 QQuick3DSceneEnvironment *QQuick3DViewport::environment() const
 {
+    if (!m_environment) {
+        if (!m_builtInEnvironment) {
+            m_builtInEnvironment = new QQuick3DSceneEnvironment;
+            // Check that we are on the "correct" thread, and move the environment to the
+            // correct thread if not. This can happen when environment() is called from the
+            // sync and no scene environment has been set.
+            if (QThread::currentThread() != m_sceneRoot->thread())
+                m_builtInEnvironment->moveToThread(m_sceneRoot->thread());
+            m_builtInEnvironment->setParentItem(m_sceneRoot);
+        }
+
+        return m_builtInEnvironment;
+    }
+
     return m_environment;
 }
 
@@ -755,6 +772,9 @@ void QQuick3DViewport::setEnvironment(QQuick3DSceneEnvironment *environment)
     m_environment = environment;
     if (m_environment && !m_environment->parentItem())
         m_environment->setParentItem(m_sceneRoot);
+
+    QQuick3DObjectPrivate::attachWatcherPriv(m_sceneRoot, this, &QQuick3DViewport::setEnvironment, environment, m_environment);
+
     emit environmentChanged();
     update();
 }
@@ -1228,7 +1248,7 @@ QList<QQuick3DPickResult> QQuick3DViewport::rayPickAll(const QVector3D &origin, 
     return processedResultList;
 }
 
-void QQuick3DViewport::processPointerEventFromRay(const QVector3D &origin, const QVector3D &direction, QPointerEvent *event)
+void QQuick3DViewport::processPointerEventFromRay(const QVector3D &origin, const QVector3D &direction, QPointerEvent *event) const
 {
     internalPick(event, origin, direction);
 }
@@ -2073,6 +2093,29 @@ void QQuick3DViewport::rebuildExtensionList()
 {
     m_extensionListDirty = true;
     update();
+}
+
+/*!
+    \internal
+
+    Private constructor for the QQuick3DViewport class so we can differentiate between
+    a regular QQuick3DViewport and one created for a specific usage, like XR.
+ */
+QQuick3DViewport::QQuick3DViewport(PrivateInstanceType type, QQuickItem *parent)
+    : QQuick3DViewport(parent)
+{
+    m_isXrViewInstance = type == PrivateInstanceType::XrViewInstance;
+}
+
+void QQuick3DViewport::updateCameraForLayer(const QQuick3DViewport &view3D, QSSGRenderLayer &layerNode)
+{
+    layerNode.explicitCameras.clear();
+    if (!view3D.m_multiViewCameras.isEmpty()) {
+        for (QQuick3DCamera *camera : std::as_const(view3D.m_multiViewCameras))
+            layerNode.explicitCameras.append(static_cast<QSSGRenderCamera *>(QQuick3DObjectPrivate::get(camera)->spatialNode));
+    } else if (view3D.camera()) {
+        layerNode.explicitCameras.append(static_cast<QSSGRenderCamera *>(QQuick3DObjectPrivate::get(view3D.camera())->spatialNode));
+    }
 }
 
 QT_END_NAMESPACE

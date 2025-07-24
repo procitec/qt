@@ -91,7 +91,12 @@ static inline constexpr size_t getSkyboxIndex(QSSGRenderLayer::TonemapMode tonem
         return 5 + (size_t(isRGBE) * QSSGRenderLayer::TonemapModeCount);
     }
 
-    Q_UNREACHABLE_RETURN(0);
+    // GCC 8.x does not treat __builtin_unreachable() as constexpr
+#  if !defined(Q_CC_GNU_ONLY) || (Q_CC_GNU >= 900)
+    // NOLINTNEXTLINE(qt-use-unreachable-return): Triggers on Clang, breaking GCC 8
+    Q_UNREACHABLE();
+#  endif
+    return 0;
 }
 
 QSSGRhiShaderPipelinePtr QSSGBuiltInRhiShaderCache::getRhiSkyBoxShader(QSSGRenderLayer::TonemapMode tonemapMode, bool isRGBE, int viewCount)
@@ -193,9 +198,9 @@ QSSGRhiShaderPipelinePtr QSSGBuiltInRhiShaderCache::getRhiLightmapDilateShader()
     return getBuiltinRhiShader(QByteArrayLiteral("lightmapdilate"), m_cache.lightmapDilateShader);
 }
 
-QSSGRhiShaderPipelinePtr QSSGBuiltInRhiShaderCache::getRhiDebugObjectShader()
+QSSGRhiShaderPipelinePtr QSSGBuiltInRhiShaderCache::getRhiDebugObjectShader(int viewCount)
 {
-    return getBuiltinRhiShader(QByteArrayLiteral("debugobject"), m_cache.debugObjectShader);
+    return getBuiltinRhiShader(QByteArrayLiteral("debugobject"), m_cache.debugObjectShader, viewCount);
 }
 
 QSSGRhiShaderPipelinePtr QSSGBuiltInRhiShaderCache::getRhiReflectionprobePreFilterShader()

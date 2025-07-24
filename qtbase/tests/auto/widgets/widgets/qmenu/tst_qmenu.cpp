@@ -117,6 +117,11 @@ private slots:
 
     void nestedTearOffDetached();
     void closeMenuOnClickIfMouseHasntMoved();
+#if QT_CONFIG(shortcut) && !defined(Q_OS_DARWIN)
+    void dontSelectDisabledActionByShortcut();
+#endif
+
+    void invisibleActions();
 
 protected slots:
     void onActivated(QAction*);
@@ -2144,6 +2149,58 @@ void tst_QMenu::closeMenuOnClickIfMouseHasntMoved()
     // should close the menu, even if it's underneath the mouse.
     QTest::mouseClick(&contextMenu, Qt::RightButton, {}, contextMenu.mapFromGlobal(pos));
 }
+
+void tst_QMenu::invisibleActions()
+{
+    QWidget window;
+    window.resize(100, 100);
+    window.show();
+
+    const QPoint globalPos = window.mapToGlobal(window.rect().center());
+
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    QMenu contextMenu;
+    QList<QAction *> actions;
+    for (int i = 0; i < 5; ++i)
+        actions << contextMenu.addAction("action");
+    QVERIFY(contextMenu.sizeHint().isValid());
+
+    contextMenu.popup(globalPos);
+    QVERIFY(contextMenu.isVisible());
+
+    contextMenu.close();
+
+    for (const auto &action : actions)
+        action->setVisible(false);
+
+    contextMenu.popup(globalPos);
+    QVERIFY(!contextMenu.isVisible());
+    QVERIFY(!contextMenu.exec());
+}
+
+#if QT_CONFIG(shortcut) && !defined(Q_OS_DARWIN)
+void tst_QMenu::dontSelectDisabledActionByShortcut()
+{
+    if (!QGuiApplicationPrivate::platformIntegration()->hasCapability(QPlatformIntegration::WindowActivation))
+        QSKIP("Window activation is not supported");
+
+    QMainWindow w;
+    auto mb = w.menuBar();
+    auto m = mb->addMenu("me&nu");
+    auto zero = m->addAction("placeholder");
+    auto first = m->addAction("disabled &o");
+    auto second = m->addAction(QStringLiteral("enabled &o"));
+
+    QSignalSpy spy(second, &QAction::triggered);
+    first->setDisabled(true);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowActive(&w));
+    QTest::keyClick(&w, Qt::Key_N, Qt::AltModifier);
+    QTest::keyClick(m, Qt::Key_O, Qt::NoModifier);
+    QCOMPARE(spy.count(), 1);
+}
+#endif
 
 QTEST_MAIN(tst_QMenu)
 #include "tst_qmenu.moc"

@@ -48,9 +48,8 @@ sudo zypper -nq install libxml2-devel libxslt-devel
 # yasm (for ffmpeg in multimedia)
 sudo zypper -nq install yasm
 
-# GStreamer (qtwebkit and qtmultimedia), pulseaudio (qtmultimedia)
-sudo zypper -nq install gstreamer-devel gstreamer-plugins-base-devel libpulse-devel pipewire-devel \
-         gstreamer-1.20-plugin-openh264 gstreamer-plugins-bad-devel
+# pulseaudio (qtmultimedia)
+sudo zypper -nq install libpulse-devel pipewire-devel
 
 # cups
 sudo zypper -nq install cups-devel
@@ -78,6 +77,12 @@ sudo zypper -nq install valgrind-devel
 
 # cifs-utils, for mounting smb drive
 sudo zypper -nq install cifs-utils
+
+# Java
+sudo zypper -nq install java-17-openjdk
+
+# For tst_license.pl with all the machines generating SBOM
+sudo zypper -nq install perl-JSON
 
 gccVersion="$(gcc --version |grep gcc |cut -b 17-23)"
 echo "GCC = $gccVersion" >> versions.txt

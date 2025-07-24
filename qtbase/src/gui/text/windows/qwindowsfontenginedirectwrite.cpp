@@ -162,27 +162,39 @@ static DWRITE_MEASURING_MODE renderModeToMeasureMode(DWRITE_RENDERING_MODE rende
     }
 }
 
+static QFont::HintingPreference determineHinting(const QFontDef &fontDef)
+{
+    QFont::HintingPreference hintingPreference = QFont::HintingPreference(fontDef.hintingPreference);
+    if (hintingPreference == QFont::PreferDefaultHinting) {
+        if (!qFuzzyCompare(qApp->devicePixelRatio(), 1.0)) {
+            // Microsoft documentation recommends using asymmetric rendering for small fonts
+            // at pixel size 16 and less, and symmetric for larger fonts.
+            hintingPreference = fontDef.pixelSize > 16.0
+                                    ? QFont::PreferNoHinting
+                                    : QFont::PreferVerticalHinting;
+        } else {
+            hintingPreference = QFont::PreferFullHinting;
+        }
+    }
+
+    return hintingPreference;
+}
+
 DWRITE_RENDERING_MODE QWindowsFontEngineDirectWrite::hintingPreferenceToRenderingMode(const QFontDef &fontDef) const
 {
     if ((fontDef.styleStrategy & QFont::NoAntialias) && glyphFormat != QFontEngine::Format_ARGB)
         return DWRITE_RENDERING_MODE_ALIASED;
 
-    QFont::HintingPreference hintingPreference = QFont::HintingPreference(fontDef.hintingPreference);
-    if (!qFuzzyCompare(qApp->devicePixelRatio(), 1.0) && hintingPreference == QFont::PreferDefaultHinting) {
-        // Microsoft documentation recommends using asymmetric rendering for small fonts
-        // at pixel size 16 and less, and symmetric for larger fonts.
-        hintingPreference = fontDef.pixelSize > 16.0
-                ? QFont::PreferNoHinting
-                : QFont::PreferVerticalHinting;
-    }
-
+    QFont::HintingPreference hintingPreference = determineHinting(fontDef);
     switch (hintingPreference) {
     case QFont::PreferNoHinting:
         return DWRITE_RENDERING_MODE_CLEARTYPE_NATURAL_SYMMETRIC;
     case QFont::PreferVerticalHinting:
         return DWRITE_RENDERING_MODE_CLEARTYPE_NATURAL;
     default:
-        return DWRITE_RENDERING_MODE_CLEARTYPE_GDI_CLASSIC;
+        return fontDef.pixelSize > 16.0
+               ? DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC
+               : DWRITE_RENDERING_MODE_GDI_CLASSIC;
     }
 }
 
@@ -216,6 +228,12 @@ QWindowsFontEngineDirectWrite::QWindowsFontEngineDirectWrite(IDWriteFontFace *di
 
     m_fontEngineData->directWriteFactory->AddRef();
     m_directWriteFontFace->AddRef();
+
+    IDWriteRenderingParams *renderingParams = nullptr;
+    if (SUCCEEDED(m_fontEngineData->directWriteFactory->CreateRenderingParams(&renderingParams))) {
+        m_pixelGeometry = renderingParams->GetPixelGeometry();
+        renderingParams->Release();
+    }
 
     fontDef.pixelSize = pixelSize;
     collectMetrics();
@@ -490,15 +508,17 @@ void QWindowsFontEngineDirectWrite::recalcAdvances(QGlyphLayout *glyphs, QFontEn
     QVarLengthArray<DWRITE_GLYPH_METRICS> glyphMetrics(glyphIndices.size());
 
     HRESULT hr;
-    DWRITE_RENDERING_MODE renderMode = hintingPreferenceToRenderingMode(fontDef);
+    QFont::HintingPreference hint = determineHinting(fontDef);
     bool needsDesignMetrics = shaperFlags & QFontEngine::DesignMetrics;
-    if (!needsDesignMetrics && (renderMode == DWRITE_RENDERING_MODE_GDI_CLASSIC
-                             || renderMode == DWRITE_RENDERING_MODE_GDI_NATURAL
-                             || renderMode == DWRITE_RENDERING_MODE_ALIASED)) {
+    if (!needsDesignMetrics && hint == QFont::PreferFullHinting) {
+        const DWRITE_RENDERING_MODE renderMode = hintingPreferenceToRenderingMode(fontDef);
+        const bool needsNaturalMetrics = renderMode == DWRITE_RENDERING_MODE_NATURAL
+                                         || renderMode == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC;
+
         hr = m_directWriteFontFace->GetGdiCompatibleGlyphMetrics(float(fontDef.pixelSize),
                                                                  1.0f,
                                                                  NULL,
-                                                                 renderMode == DWRITE_RENDERING_MODE_GDI_NATURAL,
+                                                                 needsNaturalMetrics,
                                                                  glyphIndices.data(),
                                                                  glyphIndices.size(),
                                                                  glyphMetrics.data());
@@ -687,10 +707,10 @@ QImage QWindowsFontEngineDirectWrite::alphaMapForGlyph(glyph_t glyph,
 
 bool QWindowsFontEngineDirectWrite::supportsHorizontalSubPixelPositions() const
 {
-    DWRITE_RENDERING_MODE renderMode = hintingPreferenceToRenderingMode(fontDef);
-    return  (renderMode != DWRITE_RENDERING_MODE_GDI_CLASSIC
-            && renderMode != DWRITE_RENDERING_MODE_GDI_NATURAL
-            && renderMode != DWRITE_RENDERING_MODE_ALIASED);
+    QFont::HintingPreference hinting = determineHinting(fontDef);
+    return  (!isColorFont()
+            && hinting != QFont::PreferFullHinting
+            && !(fontDef.styleStrategy & QFont::NoAntialias));
 }
 
 QFontEngine::Properties QWindowsFontEngineDirectWrite::properties() const
@@ -831,63 +851,64 @@ QImage QWindowsFontEngineDirectWrite::imageForGlyph(glyph_t t,
             image.fill(0xffffffff);
         }
 
-        BOOL ok = true;
-
         if (SUCCEEDED(hr)) {
+            BOOL ok = true;
             while (SUCCEEDED(hr) && ok) {
-                const DWRITE_COLOR_GLYPH_RUN *colorGlyphRun = 0;
-                hr = enumerator->GetCurrentRun(&colorGlyphRun);
-                if (FAILED(hr)) { // No colored runs, only outline
-                    qErrnoWarning(hr, "%s: IDWriteColorGlyphRunEnumerator::GetCurrentRun failed", __FUNCTION__);
-                    break;
-                }
-
-                IDWriteGlyphRunAnalysis *colorGlyphsAnalysis = NULL;
-                hr = factory2->CreateGlyphRunAnalysis(
-                            &colorGlyphRun->glyphRun,
-                            &transform,
-                            renderMode,
-                            measureMode,
-                            gridFitMode,
-                            DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
-                            0.0, 0.0,
-                            &colorGlyphsAnalysis
-                            );
-
-                if (FAILED(hr)) {
-                    qErrnoWarning(hr, "%s: CreateGlyphRunAnalysis failed for color run", __FUNCTION__);
-                    break;
-                }
-
-                float r, g, b, a;
-                if (colorGlyphRun->paletteIndex == 0xFFFF) {
-                    r = float(color.redF());
-                    g = float(color.greenF());
-                    b = float(color.blueF());
-                    a = float(color.alphaF());
-                } else {
-                    r = qBound(0.0f, colorGlyphRun->runColor.r, 1.0f);
-                    g = qBound(0.0f, colorGlyphRun->runColor.g, 1.0f);
-                    b = qBound(0.0f, colorGlyphRun->runColor.b, 1.0f);
-                    a = qBound(0.0f, colorGlyphRun->runColor.a, 1.0f);
-                }
-
-                if (!qFuzzyIsNull(a)) {
-                    renderGlyphRun(&image,
-                                   r,
-                                   g,
-                                   b,
-                                   a,
-                                   colorGlyphsAnalysis,
-                                   boundingRect,
-                                   renderMode);
-                }
-                colorGlyphsAnalysis->Release();
-
                 hr = enumerator->MoveNext(&ok);
                 if (FAILED(hr)) {
                     qErrnoWarning(hr, "%s: IDWriteColorGlyphRunEnumerator::MoveNext failed", __FUNCTION__);
                     break;
+                }
+
+                if (ok) {
+                    const DWRITE_COLOR_GLYPH_RUN *colorGlyphRun = 0;
+                    hr = enumerator->GetCurrentRun(&colorGlyphRun);
+                    if (FAILED(hr)) { // No colored runs, only outline
+                        qErrnoWarning(hr, "%s: IDWriteColorGlyphRunEnumerator::GetCurrentRun failed", __FUNCTION__);
+                        break;
+                    }
+
+                    IDWriteGlyphRunAnalysis *colorGlyphsAnalysis = NULL;
+                    hr = factory2->CreateGlyphRunAnalysis(
+                                &colorGlyphRun->glyphRun,
+                                &transform,
+                                renderMode,
+                                measureMode,
+                                gridFitMode,
+                                DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                                0.0, 0.0,
+                                &colorGlyphsAnalysis
+                                );
+
+                    if (FAILED(hr)) {
+                        qErrnoWarning(hr, "%s: CreateGlyphRunAnalysis failed for color run", __FUNCTION__);
+                        break;
+                    }
+
+                    float r, g, b, a;
+                    if (colorGlyphRun->paletteIndex == 0xFFFF) {
+                        r = float(color.redF());
+                        g = float(color.greenF());
+                        b = float(color.blueF());
+                        a = 1.0;
+                    } else {
+                        r = qBound(0.0f, colorGlyphRun->runColor.r, 1.0f);
+                        g = qBound(0.0f, colorGlyphRun->runColor.g, 1.0f);
+                        b = qBound(0.0f, colorGlyphRun->runColor.b, 1.0f);
+                        a = qBound(0.0f, colorGlyphRun->runColor.a, 1.0f);
+                    }
+
+                    if (!qFuzzyIsNull(a)) {
+                        renderGlyphRun(&image,
+                                       r,
+                                       g,
+                                       b,
+                                       a,
+                                       colorGlyphsAnalysis,
+                                       boundingRect,
+                                       renderMode);
+                    }
+                    colorGlyphsAnalysis->Release();
                 }
             }
         } else {
@@ -966,6 +987,9 @@ void QWindowsFontEngineDirectWrite::renderGlyphRun(QImage *destination,
                         float blueAlpha = a * *src++ / 255.0;
                         float averageAlpha = (redAlpha + greenAlpha + blueAlpha) / 3.0;
 
+                        if (m_pixelGeometry == DWRITE_PIXEL_GEOMETRY_BGR)
+                            qSwap(redAlpha, blueAlpha);
+
                         QRgb currentRgb = dest[x];
                         dest[x] = qRgba(qRound(qRed(currentRgb) * (1.0 - averageAlpha) + averageAlpha * r),
                                         qRound(qGreen(currentRgb) * (1.0 - averageAlpha) + averageAlpha * g),
@@ -989,10 +1013,14 @@ void QWindowsFontEngineDirectWrite::renderGlyphRun(QImage *destination,
                     BYTE *src = alphaValues + width * 3 * y;
 
                     for (int x = 0; x < width; ++x) {
-                        dest[x] = *(src + 0) << 16
-                                | *(src + 1) << 8
-                                | *(src + 2);
+                        BYTE redAlpha   = *(src + 0);
+                        BYTE greenAlpha = *(src + 1);
+                        BYTE blueAlpha  = *(src + 2);
 
+                        if (m_pixelGeometry == DWRITE_PIXEL_GEOMETRY_BGR)
+                            qSwap(redAlpha, blueAlpha);
+
+                        dest[x] = qRgb(redAlpha, greenAlpha, blueAlpha);
                         src += 3;
                     }
                 }

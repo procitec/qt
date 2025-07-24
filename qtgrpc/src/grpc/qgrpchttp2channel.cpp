@@ -47,57 +47,104 @@ using namespace QtGrpc;
 /*!
     \class QGrpcHttp2Channel
     \inmodule QtGrpc
+    \brief The QGrpcHttp2Channel class provides a HTTP/2 transport layer
+    for \gRPC communication.
 
-    \brief The QGrpcHttp2Channel class is an HTTP/2-based of
-    QAbstractGrpcChannel, based on \l {Qt Network} HTTP/2 implementation.
+    The QGrpcHttp2Channel class implements QAbstractGrpcChannel, enabling \gRPC
+    communication carried over \l{https://datatracker.ietf.org/doc/html/rfc7540}
+    {HTTP/2 framing}.
 
-    Uses \l QGrpcChannelOptions and \l QGrpcCallOptions
-    to control the HTTP/2 communication with the server.
+    HTTP/2 introduces several advantages over its predecessor, HTTP/1.1, making
+    QGrpcHttp2Channel well-suited for high-performance, real-time applications
+    that require efficient communication, without sacrificing security or
+    reliability, by using multiplexed TCP connections.
 
-    Use \l QGrpcChannelOptions to set the SSL configuration,
-    application-specific HTTP/2 headers, and connection timeouts.
+    The channel can be customized with \l{Secure Sockets Layer (SSL)
+    Classes}{SSL} support, a custom \l{QGrpcChannelOptions::}
+    {serializationFormat}, or other options by constructing it with a
+    QGrpcChannelOptions containing the required customizations.
 
-    \l QGrpcCallOptions control channel parameters for the
-    specific unary call or gRPC stream.
+    \section2 Transportation scheme
 
-    QGrpcHttp2Channel uses QGrpcChannelOptions to select the serialization
-    format for the protobuf messages. The serialization format can be set
-    either using the \c {content-type} metadata or by setting the
-    \l QGrpcChannelOptions::serializationFormat directly.
+    The QGrpcHttp2Channel implementation prefers different transportation
+    methods based on the provided \c{hostUri}, \l{QUrl::}{scheme} and options.
+    The following criteria applies:
 
-    Using the following example you can create a QGrpcHttp2Channel with the
-    JSON serialization format using the \c {content-type} metadata:
+    \table
+    \header
+        \li Scheme
+        \li Description
+        \li Default Port
+        \li Requirements
+        \li Example
+    \row
+        \li \c{http}
+        \li Unencrypted HTTP/2 over TCP
+        \li 80
+        \li None
+        \li \c{http://localhost}
+    \row
+        \li \c{https}
+        \li TLS-encrypted HTTP/2 over TCP
+        \li 443
+        \li QSslSocket support \b{AND} (scheme \b{OR} \l{QGrpcChannelOptions::}{sslConfiguration})
+        \li \c{https://localhost}
+    \row
+        \li \c{unix}
+        \li Unix domain socket in filesystem path
+        \li ✗
+        \li QLocalSocket support \b{AND} scheme
+        \li \c{unix:///tmp/grpc.socket}
+    \endtable
+
+    \section2 Content-Type
+
+    The \e{content-type} in \gRPC over HTTP/2 determines the message
+    serialization format. It must start with \c{application/grpc} and can
+    include a suffix. The format follows this scheme:
+
     \code
-        auto channelJson = std::make_shared<
-        QGrpcHttp2Channel>(QGrpcChannelOptions{ QUrl("http://localhost:50051", QUrl::StrictMode) }
-                               .withMetadata({ { "content-type"_ba,
-                                                 "application/grpc+json"_ba } }));
+        "content-type": "application/grpc" [("+proto" / "+json" / {custom})]
     \endcode
 
-    Also you can use own serializer and custom \c {content-type} as following:
+    For example:
+    \list
+        \li \c{application/grpc+proto} specifies Protobuf encoding.
+        \li \c{application/grpc+json} specifies JSON encoding.
+    \endlist
+
+    The serialization format can be configured either by specifying the \c
+    {content-type} inside the metadata or by setting the \l{QGrpcChannelOptions::}
+    {serializationFormat} directly. By default, the \c {application/grpc}
+    content-type is used.
+
+    To configure QGrpcHttp2Channel with the JSON serialization format using
+    \c {content-type} metadata:
+
     \code
-        class DummySerializer : public QAbstractProtobufSerializer
-        {
-            ...
-        };
-        auto channel = std::make_shared<
-            QGrpcHttp2Channel>(QUrl("http://localhost:50051", QUrl::StrictMode), QGrpcChannelOptions{}
-                               .setSerializationFormat(QGrpcSerializationFormat{ "dummy",
-                                                          std::make_shared<DummySerializer>() }));
+        auto jsonChannel = std::make_shared<QGrpcHttp2Channel>(
+            QUrl("http://localhost:50051"_L1),
+            QGrpcChannelOptions().setMetadata({
+                { "content-type"_ba, "application/grpc+json"_ba },
+            })
+        );
     \endcode
 
-    QGrpcHttp2Channel will use the \c DummySerializer to serialize
-    and deserialize protobuf message and use the
-    \c { content-type: application/grpc+dummy } header when sending
-    HTTP/2 requests to server.
+    For a custom serializer and \c {content-type}, you can directly set the
+    serialization format:
 
-    \l QGrpcChannelOptions::serializationFormat has higher priority and
-    if the \c {content-type} metadata suffix doesn't match the
-    \l QGrpcSerializationFormat::suffix of the specified
-    \l QGrpcChannelOptions::serializationFormat QGrpcHttp2Channel produces
-    warning.
+    \include qgrpcserializationformat.cpp custom-serializer-code
 
-    \sa QGrpcChannelOptions, QGrpcCallOptions, QSslConfiguration
+    \code
+        auto dummyChannel = std::make_shared<QGrpcHttp2Channel>(
+            QUrl("http://localhost:50051"_L1),
+            QGrpcChannelOptions().setSerializationFormat(dummyFormat)
+        );
+    \endcode
+
+    \include qgrpcserializationformat.cpp custom-serializer-desc
+
+    \sa QAbstractGrpcChannel, QGrpcChannelOptions, QGrpcSerializationFormat
 */
 
 namespace {
@@ -252,7 +299,9 @@ public:
         return false;
 #endif
     }
-    [[nodiscard]] QByteArrayView contentType() const { return m_contentType; }
+    [[nodiscard]] const QByteArray &contentType() const { return m_contentType; }
+
+    [[nodiscard]] const QByteArray &authorityHeader() const { return m_authorityHeader; }
 
     std::shared_ptr<QAbstractProtobufSerializer> serializer;
     QUrl hostUri;
@@ -262,13 +311,22 @@ private:
     enum ConnectionState { Connecting = 0, Connected, Error };
 
     template <typename T>
-    static void connectErrorHandler(T *socket, QGrpcOperationContext *operationContext)
+    void connectErrorHandler(T *socket, QGrpcOperationContext *operationContext)
     {
         QObject::connect(socket, &T::errorOccurred, operationContext,
-                         [operationContextPtr = QPointer(operationContext)](auto error) {
+                         [operationContextPtr = QPointer(operationContext), this](auto error) {
+                             if (m_isInsideSocketErrorOccurred) {
+                                 qGrpcCritical("Socket errorOccurred signal triggered while "
+                                               "already handling an error");
+                                 return;
+                             }
+                             m_isInsideSocketErrorOccurred = true;
+                             auto reset = qScopeGuard([this]() {
+                                 m_isInsideSocketErrorOccurred = false;
+                             });
                              emit operationContextPtr->finished(QGrpcStatus{
                                  StatusCode::Unavailable,
-                                 QGrpcHttp2ChannelPrivate::tr("Network error occurred %1")
+                                 QGrpcHttp2ChannelPrivate::tr("Network error occurred: %1")
                                      .arg(error) });
                          });
     }
@@ -287,6 +345,7 @@ private:
     }
 
     std::unique_ptr<QIODevice> m_socket = nullptr;
+    bool m_isInsideSocketErrorOccurred = false;
     QHttp2Connection *m_connection = nullptr;
     QList<Http2Handler *> m_activeHandlers;
     QList<Http2Handler *> m_pendingHandlers;
@@ -297,6 +356,7 @@ private:
     ConnectionState m_state = Connecting;
     std::function<void()> m_reconnectFunction;
 
+    QByteArray m_authorityHeader;
     Q_DISABLE_COPY_MOVE(QGrpcHttp2ChannelPrivate)
 };
 
@@ -446,12 +506,12 @@ void Http2Handler::prepareInitialRequest(QGrpcOperationContext *operationContext
     QByteArray service{ operationContext->service().data(), operationContext->service().size() };
     QByteArray method{ operationContext->method().data(), operationContext->method().size() };
     m_initialHeaders = HPack::HttpHeader{
-        { AuthorityHeader.toByteArray(),          channel->hostUri.host().toLatin1()       },
+        { AuthorityHeader.toByteArray(),          channel->authorityHeader()               },
         { MethodHeader.toByteArray(),             "POST"_ba                                },
         { PathHeader.toByteArray(),               QByteArray('/' + service + '/' + method) },
         { SchemeHeader.toByteArray(),
          channel->isLocalSocket() ? "http"_ba : channel->hostUri.scheme().toLatin1()       },
-        { ContentTypeHeader.toByteArray(),        channel->contentType().toByteArray()     },
+        { ContentTypeHeader.toByteArray(),        channel->contentType()                   },
         { GrpcServiceNameHeader.toByteArray(),    { service }                              },
         { GrpcAcceptEncodingHeader.toByteArray(), "identity,deflate,gzip"_ba               },
         { AcceptEncodingHeader.toByteArray(),     "identity,gzip"_ba                       },
@@ -642,6 +702,7 @@ QGrpcHttp2ChannelPrivate::QGrpcHttp2ChannelPrivate(const QUrl &uri, QGrpcHttp2Ch
                              QString::fromLatin1(it.value()));
     }
 
+    bool nonDefaultPort = false;
 #if QT_CONFIG(localserver)
     if (hostUri.scheme() == "unix"_L1) {
         auto *localSocket = initSocket<QLocalSocket>();
@@ -667,6 +728,8 @@ QGrpcHttp2ChannelPrivate::QGrpcHttp2ChannelPrivate(const QUrl &uri, QGrpcHttp2Ch
         auto *sslSocket = initSocket<QSslSocket>();
         if (hostUri.port() < 0) {
             hostUri.setPort(443);
+        } else {
+            nonDefaultPort = hostUri.port() != 443;
         }
 
         if (const auto userSslConfig = channelOptions.sslConfiguration(); userSslConfig) {
@@ -705,6 +768,8 @@ QGrpcHttp2ChannelPrivate::QGrpcHttp2ChannelPrivate(const QUrl &uri, QGrpcHttp2Ch
         auto *httpSocket = initSocket<QTcpSocket>();
         if (hostUri.port() < 0) {
             hostUri.setPort(80);
+        } else {
+            nonDefaultPort = hostUri.port() != 80;
         }
 
         QObject::connect(httpSocket, &QAbstractSocket::connected, this,
@@ -721,6 +786,13 @@ QGrpcHttp2ChannelPrivate::QGrpcHttp2ChannelPrivate(const QUrl &uri, QGrpcHttp2Ch
             httpSocket->connectToHost(hostUri.host(), static_cast<quint16>(hostUri.port()));
         };
     }
+
+    m_authorityHeader = hostUri.host().toLatin1();
+    if (nonDefaultPort) {
+        m_authorityHeader += ':';
+        m_authorityHeader += QByteArray::number(hostUri.port());
+    }
+
     m_reconnectFunction();
 }
 
@@ -732,7 +804,7 @@ void QGrpcHttp2ChannelPrivate::processOperation(const std::shared_ptr<QGrpcOpera
     Q_ASSERT_X(operationContextPtr != nullptr, "QGrpcHttp2ChannelPrivate::processOperation",
                "operation context is nullptr.");
 
-    if (!m_socket->isWritable()) {
+    if (!m_socket->isWritable() && m_state == ConnectionState::Connected) {
         operationContextAsyncError(operationContextPtr,
                                    QGrpcStatus{ StatusCode::Unavailable,
                                                 m_socket->errorString() });
@@ -761,7 +833,12 @@ void QGrpcHttp2ChannelPrivate::processOperation(const std::shared_ptr<QGrpcOpera
     if (m_state == ConnectionState::Error) {
         Q_ASSERT_X(m_reconnectFunction, "QGrpcHttp2ChannelPrivate::processOperation",
                    "Socket reconnection function is not defined.");
-        m_reconnectFunction();
+        if (m_isInsideSocketErrorOccurred) {
+            qGrpcWarning("Inside socket error handler. Reconnect deferred to event loop.");
+            QTimer::singleShot(0, [this]{ m_reconnectFunction(); });
+        } else {
+            m_reconnectFunction();
+        }
         m_state = ConnectionState::Connecting;
     }
 }
@@ -771,6 +848,17 @@ void QGrpcHttp2ChannelPrivate::createHttp2Connection()
     Q_ASSERT_X(m_connection == nullptr, "QGrpcHttp2ChannelPrivate::createHttp2Connection",
                "Attempt to create the HTTP/2 connection, but it already exists. This situation is "
                "exceptional.");
+
+    // Nagle's algorithm slows down gRPC communication when frequently sending small utility
+    // HTTP/2 frames. Since an ACK is not sent until a predefined timeout if the TCP frame is
+    // not full enough, communication hangs. In our case, this results in a 40ms delay when
+    // WINDOW_UPDATE or PING frames are sent in a separate TCP frame.
+    //
+    // TODO: We should probably allow users to opt out of this using QGrpcChannelOptions,
+    // see QTBUG-134428.
+    if (QAbstractSocket *abstractSocket = qobject_cast<QAbstractSocket *>(m_socket.get()))
+        abstractSocket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
+
     m_connection = QHttp2Connection::createDirectConnection(m_socket.get(), {});
 
     if (m_connection) {
@@ -840,7 +928,8 @@ void QGrpcHttp2ChannelPrivate::deleteHandler(Http2Handler *handler)
 ///
 
 /*!
-    Constructs QGrpcHttp2Channel with \a hostUri.
+    Constructs QGrpcHttp2Channel with \a hostUri. Please see the
+    \l{Transportation scheme} section for more information.
 */
 QGrpcHttp2Channel::QGrpcHttp2Channel(const QUrl &hostUri)
     : d_ptr(std::make_unique<QGrpcHttp2ChannelPrivate>(hostUri, this))
@@ -848,7 +937,8 @@ QGrpcHttp2Channel::QGrpcHttp2Channel(const QUrl &hostUri)
 }
 
 /*!
-    Constructs QGrpcHttp2Channel with \a hostUri and \a options.
+    Constructs QGrpcHttp2Channel with \a hostUri and \a options. Please see the
+    \l{Transportation scheme} section for more information.
 */
 QGrpcHttp2Channel::QGrpcHttp2Channel(const QUrl &hostUri, const QGrpcChannelOptions &options)
     : QAbstractGrpcChannel(options),
@@ -871,7 +961,7 @@ QUrl QGrpcHttp2Channel::hostUri() const
 
 /*!
     \internal
-    Implementation of unary gRPC call based on \l QNetworkAccessManager.
+    Initiates a unary \gRPC call.
 */
 void QGrpcHttp2Channel::call(std::shared_ptr<QGrpcOperationContext> operationContext)
 {
@@ -880,7 +970,7 @@ void QGrpcHttp2Channel::call(std::shared_ptr<QGrpcOperationContext> operationCon
 
 /*!
     \internal
-    Implementation of server-side gRPC stream based on \l QNetworkAccessManager.
+    Initiates a server-side \gRPC stream.
 */
 void QGrpcHttp2Channel::serverStream(std::shared_ptr<QGrpcOperationContext> operationContext)
 {
@@ -889,7 +979,7 @@ void QGrpcHttp2Channel::serverStream(std::shared_ptr<QGrpcOperationContext> oper
 
 /*!
     \internal
-    Implementation of client-side gRPC stream based on \l QNetworkAccessManager.
+    Initiates a client-side \gRPC stream.
 */
 void QGrpcHttp2Channel::clientStream(std::shared_ptr<QGrpcOperationContext> operationContext)
 {
@@ -898,7 +988,7 @@ void QGrpcHttp2Channel::clientStream(std::shared_ptr<QGrpcOperationContext> oper
 
 /*!
     \internal
-    Implementation of bidirectional gRPC stream based on \l QNetworkAccessManager.
+    Initiates a bidirectional \gRPC stream.
 */
 void QGrpcHttp2Channel::bidiStream(std::shared_ptr<QGrpcOperationContext> operationContext)
 {
@@ -906,7 +996,8 @@ void QGrpcHttp2Channel::bidiStream(std::shared_ptr<QGrpcOperationContext> operat
 }
 
 /*!
-    Returns the newly created QProtobufSerializer shared pointer.
+    \internal
+    Returns the serializer of the channel.
 */
 std::shared_ptr<QAbstractProtobufSerializer> QGrpcHttp2Channel::serializer() const
 {

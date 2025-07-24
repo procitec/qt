@@ -1,8 +1,6 @@
 // Copyright (C) 2017 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QT_NO_HTTP
-
 #include <qoauth2authorizationcodeflow.h>
 #include <private/qoauth2authorizationcodeflow_p.h>
 
@@ -57,7 +55,7 @@ using namespace Qt::StringLiterals;
 QOAuth2AuthorizationCodeFlowPrivate::QOAuth2AuthorizationCodeFlowPrivate(
         const QUrl &authorizationUrl, const QUrl &accessTokenUrl, const QString &clientIdentifier,
         QNetworkAccessManager *manager) :
-    QAbstractOAuth2Private(qMakePair(clientIdentifier, QString()), authorizationUrl, manager),
+    QAbstractOAuth2Private(std::make_pair(clientIdentifier, QString()), authorizationUrl, manager),
     accessTokenUrl(accessTokenUrl)
 {
     responseType = QStringLiteral("code");
@@ -129,7 +127,7 @@ void QOAuth2AuthorizationCodeFlowPrivate::_q_handleCallback(const QVariantMap &d
 
     QVariantMap copy(data);
     copy.remove(Key::code);
-    extraTokens = copy;
+    setExtraTokens(copy);
     q->requestAccessToken(code);
 }
 
@@ -168,11 +166,10 @@ void QOAuth2AuthorizationCodeFlowPrivate::_q_accessTokenRequestFinished(const QV
     if (!scope.isEmpty())
         q->setScope(scope);
 
-    const QDateTime currentDateTime = QDateTime::currentDateTime();
-    if (expiresIn > 0 && currentDateTime.secsTo(expiresAt) != expiresIn) {
-        expiresAt = currentDateTime.addSecs(expiresIn);
-        Q_EMIT q->expirationAtChanged(expiresAt);
-    }
+    if (expiresIn > 0)
+        setExpiresAt(QDateTime::currentDateTimeUtc().addSecs(expiresIn));
+    else
+        setExpiresAt(QDateTime());
 
     QVariantMap copy(values);
     copy.remove(Key::accessToken);
@@ -180,7 +177,9 @@ void QOAuth2AuthorizationCodeFlowPrivate::_q_accessTokenRequestFinished(const QV
     copy.remove(Key::refreshToken);
     copy.remove(Key::scope);
     copy.remove(Key::tokenType);
-    extraTokens.insert(copy);
+    QVariantMap newExtraTokens = extraTokens;
+    newExtraTokens.insert(copy);
+    setExtraTokens(newExtraTokens);
 
     setStatus(QAbstractOAuth::Status::Granted);
 }
@@ -237,12 +236,12 @@ QByteArray QOAuth2AuthorizationCodeFlowPrivate::createPKCEChallenge()
     case QOAuth2AuthorizationCodeFlow::PkceMethod::Plain:
         // RFC 7636 4.2, plain
         // code_challenge = code_verifier
-        pkceCodeVerifier = generateRandomString(pkceVerifierLength);
+        pkceCodeVerifier = generateRandomBase64String(pkceVerifierLength);
         return pkceCodeVerifier;
     case QOAuth2AuthorizationCodeFlow::PkceMethod::S256:
         // RFC 7636 4.2, S256
         // code_challenge = BASE64URL-ENCODE(SHA256(ASCII(code_verifier)))
-        pkceCodeVerifier = generateRandomString(pkceVerifierLength);
+        pkceCodeVerifier = generateRandomBase64String(pkceVerifierLength);
         // RFC 7636 3. Terminology:
         // "with all trailing '=' characters omitted"
         return QCryptographicHash::hash(pkceCodeVerifier, QCryptographicHash::Algorithm::Sha256)
@@ -577,8 +576,8 @@ void QOAuth2AuthorizationCodeFlow::requestAccessToken(const QString &code)
     request.setHeader(QNetworkRequest::ContentTypeHeader,
                       QStringLiteral("application/x-www-form-urlencoded"));
 
-    const QString data = query.toString(QUrl::FullyEncoded);
-    QNetworkReply *reply = d->networkAccessManager()->post(request, data.toUtf8());
+    const QByteArray data = query.toString(QUrl::FullyEncoded).toLatin1();
+    QNetworkReply *reply = d->networkAccessManager()->post(request, data);
     d->currentReply = reply;
     QAbstractOAuthReplyHandler *handler = replyHandler();
     QObject::connect(reply, &QNetworkReply::finished, handler,
@@ -620,5 +619,3 @@ void QOAuth2AuthorizationCodeFlow::resourceOwnerAuthorization(const QUrl &url,
 QT_END_NAMESPACE
 
 #include "moc_qoauth2authorizationcodeflow.cpp"
-
-#endif // QT_NO_HTTP

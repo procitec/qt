@@ -78,6 +78,12 @@ QQmlType QQmlTypeData::qmlType(const QString &inlineComponentName) const
 
 bool QQmlTypeData::tryLoadFromDiskCache()
 {
+    if (!m_backupSourceCode.isCacheable())
+        return false;
+
+    if (auto unit = QQmlMetaType::obtainCompilationUnit(url()))
+        return loadFromDiskCache(unit);
+
     if (!readCacheFile())
         return false;
 
@@ -442,7 +448,7 @@ void QQmlTypeData::done()
             ? m_document.data()->isSingleton()
             : (m_compiledData->unitData()->flags & QV4::CompiledData::Unit::IsSingleton);
         m_qmlType = QQmlMetaType::findCompositeType(
-                finalUrl(), m_compiledData, isSingleton
+                url(), m_compiledData, isSingleton
                         ? QQmlMetaType::Singleton
                         : QQmlMetaType::NonSingleton);
         m_typeClassName = QByteArray(m_qmlType.typeId().name()).chopped(1);
@@ -532,11 +538,10 @@ void QQmlTypeData::done()
     }
 
     {
-        QQmlEnginePrivate *const enginePrivate = QQmlEnginePrivate::get(typeLoader()->engine());
         m_compiledData->inlineComponentData = m_inlineComponentData;
         {
             // Sanity check property bindings
-            QQmlPropertyValidator validator(enginePrivate, m_importCache.data(), m_compiledData);
+            QQmlPropertyValidator validator(typeLoader(), m_importCache.data(), m_compiledData);
             QVector<QQmlError> errors = validator.validate();
             if (!errors.isEmpty()) {
                 setError(errors);
@@ -672,11 +677,14 @@ void QQmlTypeData::initializeFromCachedUnit(const QQmlPrivate::CachedQmlUnit *un
             return;
     }
 
-    m_document.reset(new QmlIR::Document(isDebugging()));
+    if (unit->qmlData->qmlUnit()->nObjects == 0) {
+        setError(QQmlTypeLoader::tr("Cached QML Unit has no objects"));
+        return;
+    }
+
+    m_document.reset(new QmlIR::Document(urlString(), finalUrlString(), isDebugging()));
     QQmlIRLoader loader(unit->qmlData, m_document.data());
     loader.load();
-    m_document->jsModule.fileName = urlString();
-    m_document->jsModule.finalUrl = finalUrlString();
     m_document->javaScriptCompilationUnit
             = QQmlRefPointer<QV4::CompiledData::CompilationUnit>(
                 new QV4::CompiledData::CompilationUnit(unit->qmlData, unit->aotCompiledFunctions),
@@ -686,7 +694,7 @@ void QQmlTypeData::initializeFromCachedUnit(const QQmlPrivate::CachedQmlUnit *un
 
 bool QQmlTypeData::loadFromSource()
 {
-    m_document.reset(new QmlIR::Document(isDebugging()));
+    m_document.reset(new QmlIR::Document(urlString(), finalUrlString(), isDebugging()));
     m_document->jsModule.sourceTimeStamp = m_backupSourceCode.sourceTimeStamp();
     QQmlEngine *qmlEngine = typeLoader()->engine();
     QmlIR::IRBuilder compiler(qmlEngine->handle()->illegalNames());
@@ -717,11 +725,9 @@ bool QQmlTypeData::loadFromSource()
 
 void QQmlTypeData::restoreIR(const QQmlRefPointer<QV4::CompiledData::CompilationUnit> &unit)
 {
-    m_document.reset(new QmlIR::Document(isDebugging()));
+    m_document.reset(new QmlIR::Document(urlString(), finalUrlString(), isDebugging()));
     QQmlIRLoader loader(unit->unitData(), m_document.data());
     loader.load();
-    m_document->jsModule.fileName = urlString();
-    m_document->jsModule.finalUrl = finalUrlString();
     m_document->javaScriptCompilationUnit = unit;
     continueLoadFromIR();
 }
@@ -886,7 +892,8 @@ void QQmlTypeData::resolveTypes()
     // Add any imported scripts to our resolved set
     const auto resolvedScripts = m_importCache->resolvedScripts();
     for (const QQmlImports::ScriptReference &script : resolvedScripts) {
-        QQmlRefPointer<QQmlScriptBlob> blob = typeLoader()->getScript(script.location);
+        QQmlRefPointer<QQmlScriptBlob> blob
+                = typeLoader()->getScript(script.location, script.fileName);
         addDependency(blob.data());
 
         ScriptReference ref;

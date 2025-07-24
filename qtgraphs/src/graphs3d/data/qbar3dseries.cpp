@@ -691,7 +691,7 @@ void QBar3DSeriesPrivate::createItemLabel()
     static const QString seriesNameTag(QStringLiteral("@seriesName"));
 
     if (m_selectedBar == QBar3DSeries::invalidSelectionPosition()) {
-        m_itemLabel = QString();
+        m_itemLabel = hiddenLabelTag;
         return;
     }
 

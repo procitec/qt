@@ -1,5 +1,0 @@
-monorail {
-  component: "Blink>PermissionsPolicy"
-}
-
-team_email: "permissions-dev@chromium.org"

@@ -90,9 +90,18 @@ void tst_valueaxis::initializeProperties()
     QCOMPARE(m_axis->tickAnchor(), 0.5);
     QCOMPARE(m_axis->tickInterval(), 0.5);
 
+    m_axis->setLabelFormat("%.2f cakes");
+    QCOMPARE(m_axis->labelFormat(), "%.2f cakes");
+
+    //Constuct a string same way we do in axisRenderer.
+    QByteArray format = m_axis->labelFormat().toLatin1();
+    QString formatTest = QString::asprintf(format.constData(), m_axis->min());
+
+    QCOMPARE(formatTest, "5.00 cakes");
+
     QCOMPARE(spy0.size(), 1);
     QCOMPARE(spy1.size(), 1);
-    QCOMPARE(spy2.size(), 1);
+    QCOMPARE(spy2.size(), 2);
     QCOMPARE(spy3.size(), 1);
     QCOMPARE(spy4.size(), 1);
     QCOMPARE(spy5.size(), 1);

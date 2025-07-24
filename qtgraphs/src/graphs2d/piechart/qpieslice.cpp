@@ -52,6 +52,15 @@ QT_BEGIN_NAMESPACE
 
     The PieSlice type should be used as a child of a PieSeries type. For example:
 
+    \code
+    PieSeries {
+        PieSlice {
+            label: "example"
+            value: 1
+        }
+    }
+    \endcode
+
     Alternatively, slices can be added to a pie series by using the \l {QtGraphs::PieSeries::append()}
     {PieSeries.append()} method.
 
@@ -274,7 +283,7 @@ QT_BEGIN_NAMESPACE
     \sa borderColor
 */
 /*!
-    \qmlproperty qreal PieSlice::borderWidth
+    \qmlproperty real PieSlice::borderWidth
     The width of the slice border.
     This is a convenience property for modifying the slice border width.
     \sa borderColor
@@ -649,13 +658,13 @@ QPieSlicePrivate::QPieSlicePrivate()
     , m_isExploded(false)
     , m_explodeDistanceFactor(.15)
     , m_labelDirty(false)
-    , m_borderWidth(1.0)
+    , m_borderWidth(0.0)
     , m_shapePath(new QQuickShapePath)
     , m_labelItem(new QQuickText)
     , m_labelShape(new QQuickShape)
     , m_labelPath(new QQuickShapePath)
 {
-    m_labelItem->setColor(Qt::white);
+    m_labelItem->setColor(Qt::transparent);
     m_labelItem->setVisible(m_isLabelVisible);
     m_labelShape->setVisible(m_isLabelVisible);
     m_labelPath->setParent(m_labelShape);

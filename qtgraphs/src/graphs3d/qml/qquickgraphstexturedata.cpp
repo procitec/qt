@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
+#include "commonutils_p.h"
 #include "qquickgraphstexturedata_p.h"
-#include "utils_p.h"
 
 #include <QtGraphs/private/qgraphsglobal_p.h>
 
@@ -12,7 +12,7 @@ QQuickGraphsTextureData::~QQuickGraphsTextureData() {}
 
 void QQuickGraphsTextureData::createGradient(QLinearGradient gradient)
 {
-    const qreal textureWidth = Utils::maxTextureSize();
+    const qreal textureWidth = CommonUtils::maxTextureSize();
     setSize(QSize(textureWidth, gradientTextureHeight));
     setFormat(QQuick3DTextureData::RGBA8);
     setHasTransparency(false);

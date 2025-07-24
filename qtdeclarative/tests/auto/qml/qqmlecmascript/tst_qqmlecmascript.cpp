@@ -90,6 +90,7 @@ private slots:
     void deferredPropertiesErrors();
     void deferredPropertiesInComponents();
     void deferredPropertiesInDestruction();
+    void deferredPropertiesInInlineComponent();
     void extensionObjects();
     void overrideExtensionProperties();
     void attachedProperties();
@@ -202,6 +203,7 @@ private slots:
     void assignSequenceTypes();
     void sequenceSort_data();
     void sequenceSort();
+    void sequenceConversionViaSequentialIterableFallback();
     void dateParse();
     void utcDate();
     void negativeYear();
@@ -1385,6 +1387,19 @@ void tst_qqmlecmascript::deferredPropertiesInDestruction()
     // QTBUG-33112 - deleting this used to cause a crash:
     QScopedPointer<QObject> object(component.create());
     QVERIFY2(object, qPrintable(component.errorString()));
+}
+
+void tst_qqmlecmascript::deferredPropertiesInInlineComponent()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, testFileUrl("DeferredInICUsage.qml"));
+    QScopedPointer<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+
+    auto *deferred =  object->property("usage").value<QObject *>();
+    QVERIFY(deferred);
+    qmlExecuteDeferred(deferred);
+    QVERIFY(object->findChild<QObject *>("foo"));
 }
 
 void tst_qqmlecmascript::extensionObjects()
@@ -3730,6 +3745,8 @@ void tst_qqmlecmascript::attachedPropertyScope()
 
 void tst_qqmlecmascript::scriptConnect()
 {
+    QTest::failOnWarning();
+
     QQmlEngine engine;
 
     {
@@ -3781,8 +3798,6 @@ void tst_qqmlecmascript::scriptConnect()
 
         QCOMPARE(object->methodCalled(), false);
 
-        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("When matching arguments for MyQmlObject_QML_[0-9]+::methodNoArgs\\(\\):"));
-        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("Too many arguments, ignoring 5"));
         emit object->argumentSignal(19, "Hello world!", 10.25, MyQmlObject::EnumValue4, Qt::RightButton);
         QCOMPARE(object->methodCalled(), true);
     }
@@ -3796,8 +3811,6 @@ void tst_qqmlecmascript::scriptConnect()
         QVERIFY(object != nullptr);
 
         QCOMPARE(object->methodCalled(), false);
-        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("When matching arguments for MyQmlObject_QML_[0-9]+::methodNoArgs\\(\\):"));
-        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("Too many arguments, ignoring 5"));
         emit object->argumentSignal(19, "Hello world!", 10.25, MyQmlObject::EnumValue4, Qt::RightButton);
         QCOMPARE(object->methodCalled(), true);
     }
@@ -4738,7 +4751,7 @@ void tst_qqmlecmascript::singletonTypeImportOrder()
     QQmlComponent component(&engine, testFileUrl("singletontype/singletonTypeImportOrder.qml"));
     QScopedPointer<QObject> object(component.create());
     QVERIFY2(object, qPrintable(component.errorString()));
-    QCOMPARE(object->property("v").toInt(), 1);
+    QCOMPARE(object->property("v").toInt(), 2);
 }
 
 void tst_qqmlecmascript::singletonTypeResolution()
@@ -4753,7 +4766,7 @@ void tst_qqmlecmascript::singletonTypeResolution()
 void tst_qqmlecmascript::verifyContextLifetime(const QQmlRefPointer<QQmlContextData> &ctxt) {
     QQmlRefPointer<QQmlContextData> childCtxt = ctxt->childContexts();
 
-    if (!ctxt->importedScripts().isNullOrUndefined()) {
+    if (!QV4::Value::fromReturnedValue(ctxt->importedScripts()).isNullOrUndefined()) {
         QV4::ExecutionEngine *v4 = ctxt->engine()->handle();
         QV4::Scope scope(v4);
         QV4::ScopedArrayObject scripts(scope, ctxt->importedScripts());
@@ -8364,6 +8377,19 @@ void tst_qqmlecmascript::sequenceSort()
     QMetaObject::invokeMethod(object.data(), function.toLatin1().constData(),
                               Q_RETURN_ARG(QVariant, q), Q_ARG(QVariant, useComparer));
     QVERIFY(q.toBool());
+}
+
+void tst_qqmlecmascript::sequenceConversionViaSequentialIterableFallback()
+{
+    QQmlEngine engine;
+    QSet<QString> mySet { {"test"}, {"test2"}, {"test3"} };
+    QJSManagedValue jsManagedVal(QVariant::fromValue(mySet), &engine);
+    QVERIFY(jsManagedVal.isArray());
+    // we can't rely on any order in the set
+    QSet<QString> result;
+    for (int i = 0, end = jsManagedVal.property("length").toInt(); i != end; ++i)
+        result.insert(jsManagedVal.property(i).toString());
+    QCOMPARE(result, mySet);
 }
 
 void tst_qqmlecmascript::dateParse()

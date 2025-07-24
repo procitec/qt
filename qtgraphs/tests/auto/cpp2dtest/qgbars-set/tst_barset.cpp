@@ -175,6 +175,7 @@ void tst_barset::appendInsertRemove()
     QSignalSpy spy0(m_set, &QBarSet::valuesAdded);
     QSignalSpy spy1(m_set, &QBarSet::valuesRemoved);
     QSignalSpy spy2(m_set, &QBarSet::selectedBarsChanged);
+    QSignalSpy spy3(m_set, &QBarSet::countChanged);
 
     QList<qreal> nums = {10, 20, 30};
     QList<qreal> morenums = {11, 21, 31};
@@ -189,6 +190,7 @@ void tst_barset::appendInsertRemove()
 
     QCOMPARE(m_set->values(), vals);
     QCOMPARE(spy0.size(), 3);
+    QCOMPARE(spy3.size(), 3);
 
     // Append 3 more
     for (int i = 0; i < morenums.count(); ++i)
@@ -196,6 +198,7 @@ void tst_barset::appendInsertRemove()
 
     QCOMPARE(m_set->values(), allvals);
     QCOMPARE(spy0.size(), 6);
+    QCOMPARE(spy3.size(), 6);
 
     // Remove the first 3 one by one
     for (int i = 2; i >= 0; --i)
@@ -203,6 +206,7 @@ void tst_barset::appendInsertRemove()
 
     QCOMPARE(m_set->values(), morevals);
     QCOMPARE(spy0.size(), 6);
+    QCOMPARE(spy3.size(), 9);
 
     // Insert them in between
     m_set->insert(0, nums[0]); // -> 10, 11, 21, 31
@@ -213,6 +217,7 @@ void tst_barset::appendInsertRemove()
     QCOMPARE(spy0.size(), 9); // values added
     QCOMPARE(spy1.size(), 3); // values removed
     QCOMPARE(spy2.size(), 0); // selectedbarsChanged
+    QCOMPARE(spy3.size(), 12); // countChanged
 }
 
 void tst_barset::replaceAt()

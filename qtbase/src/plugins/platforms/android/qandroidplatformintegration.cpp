@@ -83,7 +83,7 @@ static bool isValidAndroidContextForRendering()
 void *QAndroidPlatformNativeInterface::nativeResourceForIntegration(const QByteArray &resource)
 {
     if (resource=="JavaVM")
-        return QtAndroid::javaVM();
+        return QtAndroidPrivate::javaVM();
     if (resource == "QtActivity") {
         extern Q_CORE_EXPORT jobject qt_androidActivity();
         return qt_androidActivity();
@@ -217,7 +217,6 @@ QAndroidPlatformIntegration::QAndroidPlatformIntegration(const QStringList &para
     m_mainThread = QThread::currentThread();
 
     m_androidFDB = new QAndroidPlatformFontDatabase();
-    m_androidPlatformServices = new QAndroidPlatformServices();
 
 #ifndef QT_NO_CLIPBOARD
     m_androidPlatformClipboard = new QAndroidPlatformClipboard();
@@ -454,7 +453,10 @@ QPlatformNativeInterface *QAndroidPlatformIntegration::nativeInterface() const
 
 QPlatformServices *QAndroidPlatformIntegration::services() const
 {
-    return m_androidPlatformServices;
+    if (m_androidPlatformServices.isNull())
+        m_androidPlatformServices.reset(new QAndroidPlatformServices);
+
+    return m_androidPlatformServices.data();
 }
 
 QVariant QAndroidPlatformIntegration::styleHint(StyleHint hint) const

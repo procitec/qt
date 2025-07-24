@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QSCATTERDATAPROXY_H
-#define QSCATTERDATAPROXY_H
+#ifndef QTGRAPHS_QSCATTERDATAPROXY_H
+#define QTGRAPHS_QSCATTERDATAPROXY_H
 
 #include <QtGraphs/qabstractdataproxy.h>
 #include <QtGraphs/qscatterdataitem.h>

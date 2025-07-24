@@ -1,4 +1,0 @@
-mixins: "//third_party/blink/renderer/modules/picture_in_picture/COMMON_METADATA"
-monorail {
-  component: "Internals>Media>UI"
-}

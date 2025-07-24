@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QCUSTOMLABELITEM_H
-#define QCUSTOMLABELITEM_H
+#ifndef QTGRAPHS_QCUSTOMLABELITEM_H
+#define QTGRAPHS_QCUSTOMLABELITEM_H
 
 #include <QtGraphs/qcustom3ditem.h>
 #include <QtGraphs/qgraphsglobal.h>

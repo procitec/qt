@@ -36,7 +36,7 @@ qhp.QtGrpc.subprojects.manual.title = Qt GRPC
 qhp.QtGrpc.subprojects.manual.indexTitle = Qt GRPC module topics
 qhp.QtGrpc.subprojects.manual.type = manual
 
-depends += qtdoc qtcore qtnetwork qtwidgets qtprotobuf qtcmake qtqml
+depends += qtdoc qtcore qtnetwork qtwidgets qtprotobuf qtcmake qtqml qtquick qtquickcontrols
 
 {headerdirs,sourcedirs}  += .. \
                             ../../grpcquick
@@ -46,8 +46,6 @@ sourcedirs  += ../../tools/doc
 
 exampledirs += src/snippets \
                ../../../examples/grpc
-
-imagedirs   += ../../../examples/grpc/doc/images
 
 navigation.landingpage = "Qt GRPC"
 navigation.cppclassespage = "Qt GRPC C++ Classes"
@@ -59,6 +57,8 @@ navigation.toctitles.inclusive = false
 manifestmeta.highlighted.names = "QtGrpc/Magic 8 Ball"
 
 tagfile                 = qtgrpc.tags
+
+macro.gRPC = "\\tm gRPC"
 
 # Enforce zero documentation warnings
 warninglimit = 0

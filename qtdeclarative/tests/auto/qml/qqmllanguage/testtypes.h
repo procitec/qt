@@ -915,15 +915,23 @@ class MyCustomParserType : public QObject
 class MyCustomParserTypeParser : public QQmlCustomParser
 {
 public:
-    void verifyBindings(const QQmlRefPointer<QV4::ExecutableCompilationUnit> &, const QList<const QV4::CompiledData::Binding *> &) override {}
-    void applyBindings(QObject *, const QQmlRefPointer<QV4::ExecutableCompilationUnit> &, const QList<const QV4::CompiledData::Binding *> &) override {}
+    void verifyBindings(
+            const QQmlRefPointer<QV4::CompiledData::CompilationUnit> &,
+            const QList<const QV4::CompiledData::Binding *> &) override {}
+    void applyBindings(
+            QObject *, const QQmlRefPointer<QV4::ExecutableCompilationUnit> &,
+            const QList<const QV4::CompiledData::Binding *> &) override {}
 };
 
 class EnumSupportingCustomParser : public QQmlCustomParser
 {
 public:
-    void verifyBindings(const QQmlRefPointer<QV4::ExecutableCompilationUnit> &, const QList<const QV4::CompiledData::Binding *> &) override;
-    void applyBindings(QObject *, const QQmlRefPointer<QV4::ExecutableCompilationUnit> &, const QList<const QV4::CompiledData::Binding *> &) override {}
+    void verifyBindings(
+            const QQmlRefPointer<QV4::CompiledData::CompilationUnit> &,
+            const QList<const QV4::CompiledData::Binding *> &) override;
+    void applyBindings(
+            QObject *, const QQmlRefPointer<QV4::ExecutableCompilationUnit> &,
+            const QList<const QV4::CompiledData::Binding *> &) override {}
 };
 
 class MyParserStatus : public QObject, public QQmlParserStatus
@@ -1450,8 +1458,12 @@ public:
 
 class CustomBindingParser : public QQmlCustomParser
 {
-    void verifyBindings(const QQmlRefPointer<QV4::ExecutableCompilationUnit> &, const QList<const QV4::CompiledData::Binding *> &) override {}
-    void applyBindings(QObject *, const QQmlRefPointer<QV4::ExecutableCompilationUnit> &, const QList<const QV4::CompiledData::Binding *> &) override;
+    void verifyBindings(
+            const QQmlRefPointer<QV4::CompiledData::CompilationUnit> &,
+            const QList<const QV4::CompiledData::Binding *> &) override {}
+    void applyBindings(
+            QObject *, const QQmlRefPointer<QV4::ExecutableCompilationUnit> &,
+            const QList<const QV4::CompiledData::Binding *> &) override;
 };
 
 class SimpleObjectWithCustomParser : public QObject
@@ -1496,8 +1508,12 @@ private:
 
 class SimpleObjectCustomParser : public QQmlCustomParser
 {
-    void verifyBindings(const QQmlRefPointer<QV4::ExecutableCompilationUnit> &, const QList<const QV4::CompiledData::Binding *> &) override {}
-    void applyBindings(QObject *, const QQmlRefPointer<QV4::ExecutableCompilationUnit> &, const QList<const QV4::CompiledData::Binding *> &) override;
+    void verifyBindings(
+            const QQmlRefPointer<QV4::CompiledData::CompilationUnit> &,
+            const QList<const QV4::CompiledData::Binding *> &) override {}
+    void applyBindings(
+            QObject *, const QQmlRefPointer<QV4::ExecutableCompilationUnit> &,
+            const QList<const QV4::CompiledData::Binding *> &) override;
 };
 
 class RootObjectInCreationTester : public QObject
@@ -3057,5 +3073,45 @@ public:
 private:
     std::vector<std::vector<int>> m_list;
 };
+
+namespace YepNamespaceA {
+class YepAttached : public QObject
+{
+    Q_OBJECT
+    QML_ANONYMOUS
+
+public:
+    YepAttached(QObject *parent) : QObject(parent) { }
+    Q_INVOKABLE QString s() const { return QStringLiteral("StaticTest Attached Type"); }
+};
+class Yep : public QObject
+{
+    Q_OBJECT
+    QML_ATTACHED(YepAttached)
+    QML_ELEMENT
+
+public:
+    static YepAttached *qmlAttachedProperties(QObject *object) { return new YepAttached(object); }
+};
+
+class YepSingleton : public QObject
+{
+    Q_OBJECT
+    QML_ELEMENT
+    QML_SINGLETON
+
+public:
+    Q_INVOKABLE QString s() const { return QStringLiteral("StaticTest Singleton"); }
+};
+
+class MyObject : public QObject
+{
+    Q_OBJECT
+    QML_ELEMENT
+
+public:
+    Q_INVOKABLE QString s() const { return QStringLiteral("StaticTest"); }
+};
+} // namespace YepNamespaceA
 
 #endif // TESTTYPES_H

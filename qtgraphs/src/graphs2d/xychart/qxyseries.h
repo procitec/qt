@@ -1,8 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QXYSERIES_H
-#define QXYSERIES_H
+#ifndef QTGRAPHS_QXYSERIES_H
+#define QTGRAPHS_QXYSERIES_H
 
 #include <QtGraphs/qabstractseries.h>
 #include <QtGraphs/qgraphsglobal.h>
@@ -108,4 +108,4 @@ private:
 
 QT_END_NAMESPACE
 
-#endif // QXYSERIES_H
+#endif // QTGRAPHS_QXYSERIES_H

@@ -74,7 +74,7 @@
     \nextpage android-how-it-works.html
 
     The video below is a beginner's guide to using the Qt for Android toolchain,
-    including the Qt Creator IDE, to get you started developing Android apps.
+    including the \QC IDE, to get you started developing Qt for Android apps.
 
     \youtube 5OiIqFTjUZI
 
@@ -100,15 +100,23 @@
                 \li \l{Android: The Android NDK}{Android NDK}: for building C++ code.
                 \li \l{Android: Android SDK Platforms}{Android SDK Platform} and
                     \l{Android: Android SDK Build Tools}{Android SDK Build Tools}: for building
-                    Android apps for specific API version.
+                    Android apps for specific API versions.
                 \li \l{Android: Android SDK Platform Tools}{Android SDK Platform Tools}:
                     for deploying and managing Android dependencies.
             \endlist
     \endlist
 
-    The easiest way to manage these dependencies is by using Qt Creator's built in
-    Android development setup. For more information, see
-    \l{Qt Creator: Specifying Android Device Settings}.
+    The easiest way to manage the dependencies is by using \QC's built-in
+    Android development setup. When you first open \QC after installing Qt for
+    Android, you are asked if you want to run the Android setup wizard. This also
+    sets up OpenSSL for Android.
+
+    \section2 Using an existing SDK location
+
+    If you already have an Android SDK setup, you don't need to run this wizard. Instead, in
+    \QC go to \uicontrol{Preferences > Devices > Android} and browse to your existing JDK
+    and SDK paths. See common \l{Android SDK paths}. For more information, see
+    \l{\QC: Set up Android development environment}.
 
     \section2 Manually Installing the Prerequisites
 
@@ -150,6 +158,8 @@
     \l{Android: Android command line tools}{Android SDK Command Line Tools}
     for your operating system and extract it to the appropriate path as stated below.
 
+    \section4 Android SDK paths
+
 //! [Android SDK Paths]
     The Android SDK is commonly installed by Qt Creator or Android Studio
     in the following locations:
@@ -163,7 +173,7 @@
     Or use your OS's package manager, for example for \macOS:
 
     \badcode
-    brew install android-commandlinetool
+    brew install android-commandlinetools
     \endcode
 
     \section3 Android SDK Mandatory Packages
@@ -191,7 +201,7 @@
     you can install it by running:
 
     \badcode
-    sdkmanager "emulator" "patcher;v4"
+    sdkmanager "emulator"
     \endcode
 
     \section3 Platform Specific Configurations

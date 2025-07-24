@@ -1,7 +1,0 @@
-# This is for Chrome Enterprise Everywhere.
-
-monorail {
-  component: "Enterprise"
-}
-
-team_email: "chromium-enterprise@chromium.org"

@@ -1,8 +1,8 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QPIESERIES_H
-#define QPIESERIES_H
+#ifndef QTGRAPHS_QPIESERIES_H
+#define QTGRAPHS_QPIESERIES_H
 
 #include <QtGraphs/qabstractseries.h>
 #include <QtGraphs/qgraphsglobal.h>
@@ -104,4 +104,4 @@ private:
 
 QT_END_NAMESPACE
 
-#endif // QPIESERIES_H
+#endif // QTGRAPHS_QPIESERIES_H

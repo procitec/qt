@@ -1,2 +1,0 @@
-add_subdirectory(multipageview)
-add_subdirectory(pdfpageimage)

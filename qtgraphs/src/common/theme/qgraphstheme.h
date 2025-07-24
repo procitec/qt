@@ -1,8 +1,8 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QGRAPHSTHEME_H
-#define QGRAPHSTHEME_H
+#ifndef QTGRAPHS_QGRAPHSTHEME_H
+#define QTGRAPHS_QGRAPHSTHEME_H
 
 #include <QtCore/qobject.h>
 #include <QtGraphs/qgraphsglobal.h>

@@ -864,6 +864,46 @@ compareThreeWay(std::nullptr_t lhs, Qt::totally_ordered_wrapper<T*> rhs) noexcep
 template <typename P>
 class QTypeInfo<Qt::totally_ordered_wrapper<P>> : public QTypeInfo<P> {};
 
+namespace QtOrderingPrivate {
+
+namespace CompareThreeWayTester {
+
+using Qt::compareThreeWay;
+
+// Check if compareThreeWay is implemented for the (LT, RT) argument
+// pair.
+template <typename LT, typename RT, typename = void>
+struct HasCompareThreeWay : std::false_type {};
+
+template <typename LT, typename RT>
+struct HasCompareThreeWay<
+        LT, RT, std::void_t<decltype(compareThreeWay(std::declval<LT>(), std::declval<RT>()))>
+    > : std::true_type {};
+
+template <typename LT, typename RT>
+constexpr inline bool hasCompareThreeWay_v = HasCompareThreeWay<LT, RT>::value;
+
+// Check if the operation is noexcept. We have two different overloads,
+// depending on the available compareThreeWay() implementation.
+// Both are declared, but not implemented. To be used only in unevaluated
+// context.
+
+template <typename LT, typename RT,
+          std::enable_if_t<hasCompareThreeWay_v<LT, RT>, bool> = true>
+constexpr bool compareThreeWayNoexcept() noexcept
+{ return noexcept(compareThreeWay(std::declval<LT>(), std::declval<RT>())); }
+
+template <typename LT, typename RT,
+          std::enable_if_t<std::conjunction_v<std::negation<HasCompareThreeWay<LT, RT>>,
+                                              HasCompareThreeWay<RT, LT>>,
+                           bool> = true>
+constexpr bool compareThreeWayNoexcept() noexcept
+{ return noexcept(compareThreeWay(std::declval<RT>(), std::declval<LT>())); }
+
+} // namespace CompareThreeWayTester
+
+} // namespace QtOrderingPrivate
+
 QT_END_NAMESPACE
 
 namespace std {

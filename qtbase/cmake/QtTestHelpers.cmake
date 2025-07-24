@@ -41,6 +41,7 @@ function(qt_internal_add_benchmark target)
     qt_internal_add_executable(${target}
         NO_INSTALL # we don't install benchmarks
         NO_UNITY_BUILD # excluded by default
+        QT_BENCHMARK_TEST
         OUTPUT_DIRECTORY "${arg_OUTPUT_DIRECTORY}" # avoid polluting bin directory
         ${exec_args}
     )
@@ -230,6 +231,7 @@ function(qt_internal_get_test_arg_definitions optional_args single_value_args mu
         QML_IMPORTPATH
         TESTDATA
         QT_TEST_SERVER_LIST
+        ANDROID_TESTRUNNER_PRE_TEST_ADB_COMMANDS
         ${__default_private_args}
         ${__default_public_args}
         PARENT_SCOPE
@@ -447,6 +449,8 @@ endfunction()
 #       The option forces adding the provided TESTDATA to resources.
 #    MANUAL
 #       The option indicates that the test is a manual test.
+#    ANDROID_TESTRUNNER_PRE_TEST_ADB_COMMANDS
+#       Passes --pre-test-adb-command <command> to androidTestRunner. Android specific argument.
 function(qt_internal_add_test name)
     qt_internal_get_test_arg_definitions(optional_args single_value_args multi_value_args)
 
@@ -659,6 +663,13 @@ function(qt_internal_add_test name)
         endif()
         qt_internal_android_test_runner_arguments("${name}" test_executable extra_test_args)
         list(APPEND extra_test_args "--timeout" "${android_timeout}" "--verbose")
+
+        if(arg_ANDROID_TESTRUNNER_PRE_TEST_ADB_COMMANDS)
+            foreach(command IN LISTS arg_ANDROID_TESTRUNNER_PRE_TEST_ADB_COMMANDS)
+                list(APPEND extra_test_args "--pre-test-adb-command" "${command}")
+            endforeach()
+        endif()
+
         set(test_working_dir "${CMAKE_CURRENT_BINARY_DIR}")
     elseif(QNX)
         set(test_working_dir "")
@@ -764,18 +775,10 @@ function(qt_internal_add_test name)
             )
         endif()
 
-        # Add a ${target}/check makefile target, to more easily test one test.
-
-        set(test_config_options "")
-        get_cmake_property(is_multi_config GENERATOR_IS_MULTI_CONFIG)
-        if(is_multi_config)
-            set(test_config_options -C $<CONFIG>)
-        endif()
-        add_custom_target("${testname}_check"
-            VERBATIM
-            COMMENT "Running ${CMAKE_CTEST_COMMAND} -V -R \"^${name}$\" ${test_config_options}"
-            COMMAND "${CMAKE_CTEST_COMMAND}" -V -R "^${name}$" ${test_config_options}
-        )
+        # Add a ${target}_check makefile target, to more easily test one test.
+        # TODO: Note in batch mode testname tests would execute all batched tests defined in name
+        _qt_internal_make_check_target(${testname} CTEST_TEST_NAME ${name})
+        # Add appropriate dependencies to the targets as needed
         if(TARGET "${name}")
             add_dependencies("${testname}_check" "${name}")
             if(ANDROID)
@@ -869,6 +872,20 @@ function(qt_internal_add_test name)
                         DESTINATION "${testdata_install_dir}")
                 endif()
             endforeach()
+        endif()
+    endif()
+
+    if(MACOS AND NOT CMAKE_GENERATOR STREQUAL "Xcode")
+        # Add com.apple.security.get-task-allow entitlement to each
+        # test binary, so we can hook into the Swift crash handling.
+        if(NOT arg_QMLTEST AND arg_SOURCES)
+            set(entitlements_file
+                "${__qt_internal_cmake_apple_support_files_path}/test.entitlements.plist")
+            add_custom_command(TARGET "${name}"
+                POST_BUILD COMMAND codesign --sign -
+                    --entitlements "${entitlements_file}"
+                    "$<TARGET_FILE:${name}>"
+                )
         endif()
     endif()
 
@@ -1119,6 +1136,14 @@ function(qt_internal_collect_command_environment out_path out_plugin_path)
 endfunction()
 
 function(qt_internal_add_test_finalizers target)
+    # Opt out to skip the new way of running test finalizers, and instead use the old way for
+    # specific platforms.
+    # TODO: Remove once we confirm that the new way of running test finalizers for all platforms
+    # doesn't cause any issues.
+    if(QT_INTERNAL_SKIP_TEST_FINALIZERS_V2)
+        return()
+    endif()
+
     # It might not be safe to run all the finalizers of _qt_internal_finalize_executable
     # within the context of a Qt build (not a user project) when targeting a host build.
     # At least one issue is missing qmlimportscanner at configure time.

@@ -146,19 +146,27 @@ Item {
             initialized.clear()
             compare(initialized.values, [])
 
+            // 6 calls from when values list is first initialized
+            // 9 calls when original values are replaced with different values (remove old values, append new ones)
+            // 3 calls when values are replaced with empty list (remove old values)
+            compare(countSpy.count, 18)
+
             //append
             initialized.append(10)
             compare(initialized.count, 1)
             initialized.append([20,30,40])
             compare(initialized.count, 4)
+            compare(countSpy.count, 20)
 
             //remove
             initialized.remove(0, 2) // 30, 40
             compare(initialized.count, 2)
+            compare(countSpy.count, 21)
 
             //insert
             initialized.insert(0, 20) // 20, 30, 40
             compare(initialized.count, 3)
+            compare(countSpy.count, 22)
 
             //replace
             initialized.replace(1, 10) //20, 10, 40

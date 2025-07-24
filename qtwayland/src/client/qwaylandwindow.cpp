@@ -4,6 +4,7 @@
 #include "qwaylandwindow_p.h"
 
 #include "qwaylandbuffer_p.h"
+#include "qwaylandcursor_p.h"
 #include "qwaylanddisplay_p.h"
 #include "qwaylandsurface_p.h"
 #include "qwaylandinputdevice_p.h"
@@ -765,7 +766,8 @@ void QWaylandWindow::commit(QWaylandBuffer *buffer, const QRegion &damage)
 {
     Q_ASSERT(isExposed());
     if (buffer->committed()) {
-        qCDebug(lcWaylandBackingstore) << "Buffer already committed, ignoring.";
+        mSurface->commit();
+        qCDebug(lcWaylandBackingstore) << "Buffer already committed, not attaching.";
         return;
     }
 
@@ -1210,6 +1212,9 @@ void QWaylandWindow::handleMouse(QWaylandInputDevice *inputDevice, const QWaylan
         switch (e.type) {
             case QEvent::Enter:
                 QWindowSystemInterface::handleEnterEvent(window(), e.local, e.global);
+#if QT_CONFIG(cursor)
+                mDisplay->waylandCursor()->setPosFromEnterEvent(e.global.toPoint());
+#endif
                 break;
             case QEvent::MouseButtonPress:
             case QEvent::MouseButtonRelease:
@@ -1413,6 +1418,9 @@ void QWaylandWindow::handleMouseEventWithDecoration(QWaylandInputDevice *inputDe
         switch (e.type) {
             case QEvent::Enter:
                 QWindowSystemInterface::handleEnterEvent(window(), localTranslated, globalTranslated);
+#if QT_CONFIG(cursor)
+                mDisplay->waylandCursor()->setPosFromEnterEvent(e.global.toPoint());
+#endif
                 break;
             case QEvent::MouseButtonPress:
             case QEvent::MouseButtonRelease:
@@ -1789,12 +1797,20 @@ void QWaylandWindow::setOpaqueArea(const QRegion &opaqueArea)
 
 void QWaylandWindow::requestXdgActivationToken(uint serial)
 {
+    if (!mShellSurface) {
+        qCWarning(lcQpaWayland) << "requestXdgActivationToken is called with no surface role created, emitting synthetic signal";
+        Q_EMIT xdgActivationTokenCreated({});
+        return;
+    }
     mShellSurface->requestXdgActivationToken(serial);
 }
 
 void QWaylandWindow::setXdgActivationToken(const QString &token)
 {
-    mShellSurface->setXdgActivationToken(token);
+    if (mShellSurface)
+        mShellSurface->setXdgActivationToken(token);
+    else
+        qCWarning(lcQpaWayland) << "setXdgActivationToken is called with no surface role created, token" << token << "discarded";
 }
 
 void QWaylandWindow::addChildPopup(QWaylandWindow *child)

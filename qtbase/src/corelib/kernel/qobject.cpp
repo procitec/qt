@@ -170,7 +170,7 @@ QObjectPrivate::QObjectPrivate(int version)
     isDeletingChildren = false;                 // set by deleteChildren()
     sendChildEvents = true;                     // if we should send ChildAdded and ChildRemoved events to parent
     receiveChildEvents = true;
-    postedEvents = 0;
+    postedEvents.storeRelaxed(0);
     extraData = nullptr;
     metaObject = nullptr;
     isWindow = false;
@@ -198,7 +198,7 @@ QObjectPrivate::~QObjectPrivate()
         }
     }
 
-    if (postedEvents)
+    if (postedEvents.loadRelaxed())
         QCoreApplication::removePostedEvents(q_ptr, 0);
 
     thisThreadData->deref();
@@ -655,7 +655,7 @@ QMetaCallEvent* QMetaCallEvent::create_impl(QtPrivate::SlotObjUniquePtr slotObj,
     \reentrant
 
     QSignalBlocker can be used wherever you would otherwise use a
-    pair of calls to blockSignals(). It blocks signals in its
+    pair of calls to QObject::blockSignals(). It blocks signals in its
     constructor and in the destructor it resets the state to what
     it was before the constructor ran.
 
@@ -1400,7 +1400,6 @@ bool QObject::event(QEvent *e)
         break;
 
     case QEvent::DeferredDelete:
-        qCDebug(lcDeleteLater) << "Deferred deleting" << this;
         delete this;
         break;
 
@@ -1738,8 +1737,8 @@ void QObjectPrivate::setThreadData_helper(QThreadData *currentData, QThreadData 
     }
 
     // move posted events
-    int eventsMoved = 0;
-    for (int i = 0; i < currentData->postEventList.size(); ++i) {
+    qsizetype eventsMoved = 0;
+    for (qsizetype i = 0; i < currentData->postEventList.size(); ++i) {
         const QPostEvent &pe = currentData->postEventList.at(i);
         if (!pe.event)
             continue;
@@ -2451,10 +2450,8 @@ void QObject::deleteLater()
     // as long as we're not guarding every access to the bit field.
 
     Q_D(QObject);
-    if (d->deleteLaterCalled) {
-        qCDebug(lcDeleteLater) << "Skipping deleteLater for already deferred object" << this;
+    if (d->deleteLaterCalled)
         return;
-    }
 
     d->deleteLaterCalled = true;
 
@@ -2480,15 +2477,9 @@ void QObject::deleteLater()
         // non-conformant code path, and our best guess is that the scope level
         // should be 1. (Loop level 0 is special: it means that no event loops
         // are running.)
-        if (scopeLevel == 0 && loopLevel != 0) {
-            qCDebug(lcDeleteLater) << "Delete later called with scope level 0"
-                << "but loop level is > 0. Assuming scope is 1";
+        if (scopeLevel == 0 && loopLevel != 0)
             scopeLevel = 1;
-        }
     }
-
-    qCDebug(lcDeleteLater) << "Posting deferred delete for" << this
-        << "with loop level" << loopLevel << "and scope level" << scopeLevel;
 
     eventListLocker.unlock();
     QCoreApplication::postEvent(this,
@@ -2728,10 +2719,16 @@ int QObject::senderSignalIndex() const
 
     \snippet code/src_corelib_kernel_qobject.cpp 21
 
+    As the code snippet above illustrates, you can use this function to avoid
+    expensive operations or emitting a signal that nobody listens to.
+
+    \warning In a multithreaded application, consecutive calls to this
+    function are not guaranteed to yield the same results.
+
     \warning This function violates the object-oriented principle of
-    modularity. However, it might be useful when you need to perform
-    expensive initialization only if something is connected to a
-    signal.
+    modularity. In particular, this function must not be called from an
+    override of connectNotify() or disconnectNotify(), as those might get
+    called from any thread.
 
     \sa isSignalConnected()
 */
@@ -2788,14 +2785,17 @@ int QObject::receivers(const char *signal) const
     \snippet code/src_corelib_kernel_qobject.cpp 49
 
     As the code snippet above illustrates, you can use this function to avoid
-    expensive initialization or emitting a signal that nobody listens to.
-    However, in a multithreaded application, connections might change after
-    this function returns and before the signal gets emitted.
+    expensive operations or emitting a signal that nobody listens to.
+
+    \warning In a multithreaded application, consecutive calls to this
+    function are not guaranteed to yield the same results.
 
     \warning This function violates the object-oriented principle of
     modularity. In particular, this function must not be called from an
     override of connectNotify() or disconnectNotify(), as those might get
     called from any thread.
+
+    \sa receivers()
 */
 bool QObject::isSignalConnected(const QMetaMethod &signal) const
 {
@@ -3477,8 +3477,7 @@ bool QObject::disconnect(const QObject *sender, const QMetaMethod &signal,
 
     \warning This function violates the object-oriented principle of
     modularity. However, it might be useful when you need to perform
-    expensive initialization only if something is connected to a
-    signal.
+    an expensive operation only if something is connected to a signal.
 
     \warning This function is called from the thread which performs the
     connection, which may be a different thread from the thread in which
